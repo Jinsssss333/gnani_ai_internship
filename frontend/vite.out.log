@@ -1,0 +1,12 @@
+
+> swarsathi-asha-register@0.1.0 dev
+> vite --host 0.0.0.0 --host 0.0.0.0
+
+Port 5173 is in use, trying another one...
+Port 5174 is in use, trying another one...
+
+  VITE v7.3.7  ready in 585 ms
+
+  ➜  Local:   http://localhost:5175/
+  ➜  Network: http://10.72.177.198:5175/
+  ➜  Network: http://172.21.112.1:5175/

@@ -1,0 +1,12 @@
+{
+  "name": "SwarSathi Visit Register",
+  "short_name": "SwarSathi",
+  "description": "Voice-first visit notes for community health workers",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f7f2",
+  "theme_color": "#1d594f",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

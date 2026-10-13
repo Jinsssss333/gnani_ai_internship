@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getDemoVisit, getHealth, getVisits, processAudio, requestTts, saveVisit } from "./api";
-import { deleteQueuedVisit, getQueuedVisit, listQueuedVisits, putQueuedVisit } from "./storage";
+import { deleteQueuedVisit, getQueuedVisit, listQueuedVisits, listSavedVisits, putQueuedVisit, putSavedVisit } from "./storage";
 import type { ProviderHealth, QueuedVisit, VisitFields, VisitRecord } from "./types";
 
 const EMPTY_FIELDS: VisitFields = {
@@ -12,6 +12,8 @@ const EMPTY_FIELDS: VisitFields = {
   follow_up_phrase: "",
   notes: "",
 };
+const MAX_RECORDING_SECONDS = 60;
+const PRISMA_SAMPLE_RATE = 16000;
 
 const languages = [
   { code: "hi-IN", label: "Hindi / Hinglish" },
@@ -43,6 +45,58 @@ function initials(name: string | null): string {
   return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
 }
 
+async function convertToWav(source: Blob): Promise<Blob> {
+  const AudioContextConstructor = window.AudioContext
+    ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextConstructor) throw new Error("This browser cannot prepare audio for Prisma.");
+
+  const context = new AudioContextConstructor();
+  try {
+    const decoded = await context.decodeAudioData(await source.arrayBuffer());
+    const sampleCount = Math.ceil(decoded.length * PRISMA_SAMPLE_RATE / decoded.sampleRate);
+    const samples = new Float32Array(sampleCount);
+    const channels = Array.from({ length: decoded.numberOfChannels }, (_, index) => decoded.getChannelData(index));
+
+    for (let index = 0; index < sampleCount; index += 1) {
+      const sourcePosition = index * decoded.sampleRate / PRISMA_SAMPLE_RATE;
+      const leftIndex = Math.floor(sourcePosition);
+      const rightIndex = Math.min(leftIndex + 1, decoded.length - 1);
+      const fraction = sourcePosition - leftIndex;
+      let sample = 0;
+      for (const channel of channels) {
+        sample += channel[leftIndex] * (1 - fraction) + channel[rightIndex] * fraction;
+      }
+      samples[index] = sample / channels.length;
+    }
+
+    const wav = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(wav);
+    const writeText = (offset: number, value: string) => {
+      for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index));
+    };
+    writeText(0, "RIFF");
+    view.setUint32(4, wav.byteLength - 8, true);
+    writeText(8, "WAVE");
+    writeText(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, PRISMA_SAMPLE_RATE, true);
+    view.setUint32(28, PRISMA_SAMPLE_RATE * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeText(36, "data");
+    view.setUint32(40, samples.length * 2, true);
+    for (let index = 0; index < samples.length; index += 1) {
+      const sample = Math.max(-1, Math.min(1, samples[index]));
+      view.setInt16(44 + index * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+    }
+    return new Blob([wav], { type: "audio/wav" });
+  } finally {
+    await context.close();
+  }
+}
+
 export default function App() {
   const [queue, setQueue] = useState<QueuedVisit[]>([]);
   const [visits, setVisits] = useState<VisitRecord[]>([]);
@@ -62,20 +116,40 @@ export default function App() {
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const inFlightRef = useRef(new Set<string>());
+  const queueRef = useRef<QueuedVisit[]>([]);
+  const queueWritesRef = useRef(new Map<string, Promise<void>>());
 
   const active = useMemo(() => queue.find((item) => item.id === activeId) ?? null, [queue, activeId]);
-  const pendingCount = queue.filter((item) => item.state !== "ready").length;
+  const pendingAudioCount = queue.filter((item) => item.state === "waiting" || item.state === "error").length;
+  const pendingRegisterCount = visits.filter((visit) => visit.sync_state === "pending").length;
+  const pendingCount = pendingAudioCount + pendingRegisterCount;
+
+  function replaceQueue(items: QueuedVisit[]) {
+    queueRef.current = items;
+    setQueue(items);
+  }
 
   const refreshLocal = useCallback(async () => {
+    await Promise.all([...queueWritesRef.current.values()].map((write) => write.catch(() => undefined)));
     const items = await listQueuedVisits();
-    setQueue(items);
+    replaceQueue(items);
     if (!activeId && items.length) setActiveId(items[0].id);
   }, [activeId]);
 
   const refreshServer = useCallback(async () => {
+    const localRecords = await listSavedVisits().catch(() => []);
+    setVisits(localRecords);
     try {
       const [records, providerHealth] = await Promise.all([getVisits(), getHealth()]);
-      setVisits(records);
+      const serverIds = new Set(records.map((visit) => visit.id));
+      const localWithStatus = localRecords.map((visit) => {
+        const updated: VisitRecord = { ...visit, sync_state: serverIds.has(visit.id) ? "synced" : visit.sync_state ?? "pending" };
+        if (updated.sync_state !== visit.sync_state) void putSavedVisit(updated);
+        return updated;
+      });
+      const merged = new Map<string, VisitRecord>(records.map((visit) => [visit.id, { ...visit, sync_state: "synced" }]));
+      for (const visit of localWithStatus) merged.set(visit.id, visit);
+      setVisits([...merged.values()].sort((a, b) => b.created_at.localeCompare(a.created_at)));
       setHealth(providerHealth);
     } catch {
       // Local capture and review remain available when the backend is unreachable.
@@ -83,10 +157,14 @@ export default function App() {
   }, []);
 
   const updateQueued = useCallback(async (id: string, patch: Partial<QueuedVisit>) => {
-    const current = await getQueuedVisit(id);
+    const current = queueRef.current.find((item) => item.id === id);
     if (!current) return;
-    await putQueuedVisit({ ...current, ...patch });
-    setQueue(await listQueuedVisits());
+    const updated = { ...current, ...patch };
+    replaceQueue(queueRef.current.map((item) => item.id === id ? updated : item));
+    const previous = queueWritesRef.current.get(id) ?? Promise.resolve();
+    const write = previous.catch(() => undefined).then(() => putQueuedVisit(updated));
+    queueWritesRef.current.set(id, write);
+    await write;
   }, []);
 
   const processQueued = useCallback(async (id: string) => {
@@ -98,7 +176,7 @@ export default function App() {
     try {
       const result = await processAudio(item.audio, item.language, id);
       await putQueuedVisit({ ...item, ...result, state: "ready", audio: item.audio, error: undefined });
-      setQueue(await listQueuedVisits());
+      replaceQueue(await listQueuedVisits());
       setActiveId(id);
       setMessage("Transcript ready. Review every field before saving.");
       await refreshServer();
@@ -114,7 +192,7 @@ export default function App() {
     void listQueuedVisits().then((items) => {
       if (cancelled) return;
       const recovered = items.map((item) => item.state === "processing" ? { ...item, state: "waiting" as const } : item);
-      setQueue(recovered);
+      replaceQueue(recovered);
       if (recovered.some((item, index) => item !== items[index])) {
         void Promise.all(recovered.map((item) => putQueuedVisit(item)));
       }
@@ -140,7 +218,17 @@ export default function App() {
   useEffect(() => {
     if (!recording) return;
     const timer = window.setInterval(() => setSeconds((value) => value + 1), 1000);
-    return () => window.clearInterval(timer);
+    const maximum = window.setTimeout(() => {
+      if (recorderRef.current?.state === "recording") {
+        recorderRef.current.stop();
+        setRecording(false);
+        setMessage("Recording stopped at the 60-second limit. Your note is saved on this device.");
+      }
+    }, MAX_RECORDING_SECONDS * 1000);
+    return () => {
+      window.clearInterval(timer);
+      window.clearTimeout(maximum);
+    };
   }, [recording]);
 
   useEffect(() => {
@@ -160,7 +248,11 @@ export default function App() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       chunksRef.current = [];
-      const recorder = new MediaRecorder(stream);
+      const supportedMime = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4"]
+        .find((mimeType) => MediaRecorder.isTypeSupported(mimeType));
+      const recorder = supportedMime
+        ? new MediaRecorder(stream, { mimeType: supportedMime })
+        : new MediaRecorder(stream);
       recorderRef.current = recorder;
       recorder.ondataavailable = (event) => {
         if (event.data.size) chunksRef.current.push(event.data);
@@ -186,23 +278,31 @@ export default function App() {
   }
 
   async function storeRecording(audio: Blob) {
-    const id = crypto.randomUUID();
-    const now = new Date().toISOString();
-    const item: QueuedVisit = {
-      id,
-      created_at: now,
-      transcript: "",
-      language,
-      extraction_source: "pending",
-      visit: structuredClone(EMPTY_FIELDS),
-      state: "waiting",
-      audio,
-    };
-    await putQueuedVisit(item);
-    await refreshLocal();
-    setActiveId(id);
-    setMessage(online ? "Recording saved on this device. Sending it for transcription…" : "Recording saved on this device. It will sync when you are online.");
-    if (online) void processQueued(id);
+    setBusy(true);
+    try {
+      const wav = await convertToWav(audio);
+      const id = crypto.randomUUID();
+      const now = new Date().toISOString();
+      const item: QueuedVisit = {
+        id,
+        created_at: now,
+        transcript: "",
+        language,
+        extraction_source: "pending",
+        visit: structuredClone(EMPTY_FIELDS),
+        state: "waiting",
+        audio: wav,
+      };
+      await putQueuedVisit(item);
+      await refreshLocal();
+      setActiveId(id);
+      setMessage(online ? "Recording saved on this device. Sending it for transcription…" : "Recording saved on this device. It will sync when you are online.");
+      if (online) void processQueued(id);
+    } catch (error) {
+      setMessage(`Could not prepare the recording: ${getErrorMessage(error)}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function loadSample() {
@@ -224,41 +324,91 @@ export default function App() {
 
   async function syncPending() {
     const items = await listQueuedVisits();
-    const pending = items.filter((item) => item.audio && item.state !== "processing");
-    if (!pending.length) {
+    const pendingAudio = items.filter((item) => item.audio && (item.state === "waiting" || item.state === "error"));
+    const pendingRegister = (await listSavedVisits()).filter((visit) => visit.sync_state === "pending");
+    if (!pendingAudio.length && !pendingRegister.length) {
       setMessage("There are no recorded visits waiting to sync.");
       return;
     }
-    setMessage(`Syncing ${pending.length} recorded visit${pending.length === 1 ? "" : "s"}…`);
-    await Promise.all(pending.map((item) => processQueued(item.id)));
+    setMessage("Syncing saved visits and recordings…");
+    await Promise.all(pendingAudio.map((item) => processQueued(item.id)));
+
+    let syncedRecords = 0;
+    let failedRecords = 0;
+    for (const visit of pendingRegister) {
+      try {
+        const serverRecord = await saveVisit(visit);
+        const synced = { ...serverRecord, sync_state: "synced" as const };
+        await putSavedVisit(synced);
+        setVisits((current) => [synced, ...current.filter((item) => item.id !== synced.id)]);
+        syncedRecords += 1;
+      } catch {
+        failedRecords += 1;
+      }
+    }
+    await refreshServer();
+    const audioWaiting = (await listQueuedVisits()).filter((item) => item.audio && (item.state === "waiting" || item.state === "error")).length;
+    if (failedRecords || audioWaiting) {
+      setMessage(`Sync finished with ${failedRecords + audioWaiting} item${failedRecords + audioWaiting === 1 ? "" : "s"} still waiting. Check the connection and retry.`);
+    } else {
+      setMessage(`Sync complete. ${syncedRecords} confirmed visit${syncedRecords === 1 ? "" : "s"} added to the register.`);
+    }
   }
 
   async function saveCurrentVisit() {
-    if (!active || active.state !== "ready") return;
+    if (!active) return;
+    const currentDraft = active;
     setSaving(true);
     setMessage("");
     setTtsUrl(null);
     try {
-      const saved = await saveVisit(active);
-      await deleteQueuedVisit(active.id);
-      setQueue(await listQueuedVisits());
-      setVisits((current) => [saved, ...current.filter((visit) => visit.id !== saved.id)]);
+      await queueWritesRef.current.get(currentDraft.id)?.catch(() => undefined);
+      const draft = queueRef.current.find((item) => item.id === currentDraft.id) ?? currentDraft;
+      if (draft.state !== "ready") return;
+      const localRecord: VisitRecord = {
+        id: draft.id,
+        created_at: draft.created_at,
+        transcript: draft.transcript,
+        language: draft.language,
+        extraction_source: draft.extraction_source,
+        visit: draft.visit,
+        sync_state: "pending",
+      };
+      await putSavedVisit(localRecord);
+      await deleteQueuedVisit(draft.id);
+      replaceQueue(await listQueuedVisits());
+      setVisits((current) => [localRecord, ...current.filter((visit) => visit.id !== localRecord.id)]);
       setActiveId(null);
-      const name = active.visit.patient_name?.trim() || "the patient";
-      const followUp = active.visit.follow_up_phrase || active.visit.follow_up_date;
+      const name = draft.visit.patient_name?.trim() || "the patient";
+      const followUp = draft.visit.follow_up_phrase || draft.visit.follow_up_date;
       const summary = followUp
         ? `Visit recorded for ${name}. Follow-up: ${followUp}.`
         : `Visit recorded for ${name}.`;
       setConfirmation(summary);
-      setMessage("Visit saved to the register. The local recording has been removed from the sync queue.");
+      if (!navigator.onLine) {
+        setMessage("Visit saved on this device. Use Sync now after reconnecting to add it to the shared register.");
+        return;
+      }
+
       try {
-        const audio = await requestTts(summary, active.language);
+        const serverRecord = await saveVisit(localRecord);
+        const synced = { ...serverRecord, sync_state: "synced" as const };
+        await putSavedVisit(synced);
+        setVisits((current) => [synced, ...current.filter((visit) => visit.id !== synced.id)]);
+        setMessage("Visit saved to this device and synced to the register.");
+      } catch (error) {
+        setMessage(`Visit is safe on this device and will sync later. ${getErrorMessage(error)}`);
+        return;
+      }
+
+      try {
+        const audio = await requestTts(summary, draft.language);
         setTtsUrl(URL.createObjectURL(audio));
       } catch (error) {
-        setMessage(`Visit saved. Timbre read-back is unavailable: ${getErrorMessage(error)}`);
+        setMessage(`Visit synced. Timbre read-back is unavailable: ${getErrorMessage(error)}`);
       }
     } catch (error) {
-      setMessage(`Could not save the visit yet: ${getErrorMessage(error)}`);
+      setMessage(`Could not save the visit on this device: ${getErrorMessage(error)}`);
     } finally {
       setSaving(false);
     }
@@ -266,9 +416,10 @@ export default function App() {
 
   async function discardCurrent() {
     if (!active) return;
+    await queueWritesRef.current.get(active.id)?.catch(() => undefined);
     await deleteQueuedVisit(active.id);
     const remaining = await listQueuedVisits();
-    setQueue(remaining);
+    replaceQueue(remaining);
     setActiveId(remaining[0]?.id ?? null);
     setMessage("Draft removed from this device.");
   }
@@ -321,7 +472,7 @@ export default function App() {
         {pendingCount > 0 && (
           <div className={`sync-banner ${online ? "sync-ready" : "sync-waiting"}`}>
             <span className="sync-icon">{online ? "↻" : "◷"}</span>
-            <span><strong>{pendingCount} visit{pendingCount === 1 ? "" : "s"} {online ? "ready to sync" : "saved on this device"}</strong><small>{online ? "AI processing starts when you sync." : "Transcription and AI review will run after you reconnect."}</small></span>
+            <span><strong>{pendingCount} item{pendingCount === 1 ? "" : "s"} {online ? "ready to sync" : "saved on this device"}</strong><small>{pendingAudioCount && pendingRegisterCount ? "Recordings need processing; confirmed visits need register sync." : pendingAudioCount ? "Recordings will be transcribed when you sync online." : "Confirmed visits will be added to the shared register when you sync."}</small></span>
             {online && <button className="text-button" onClick={() => void syncPending()}>Sync now <span>→</span></button>}
           </div>
         )}
@@ -353,12 +504,12 @@ export default function App() {
                 </div>
                 <div className="record-control-wrap">
                   {recording && <span className="record-timer">{clock}</span>}
-                  <button className={`record-button ${recording ? "record-stop" : ""}`} onClick={() => recording ? stopRecording() : void beginRecording()} aria-label={recording ? "Stop recording" : "Start recording"}>
+                  <button className={`record-button ${recording ? "record-stop" : ""}`} onClick={() => recording ? stopRecording() : void beginRecording()} aria-label={recording ? "Stop recording" : "Start recording"} disabled={busy}>
                     {recording ? <span className="stop-square" /> : <span className="mic-icon">🎙</span>}
                   </button>
                 </div>
               </div>
-              <div className="capture-foot"><span className="secure-icon">♧</span><span>Recordings stay on this device until they sync.</span><span className="duration-note">MAX 2 MIN</span></div>
+              <div className="capture-foot"><span className="secure-icon">♧</span><span>Recordings stay on this device until they sync.</span><span className="duration-note">MAX 60 SEC</span></div>
             </section>
 
             <section className="card review-card">
@@ -381,21 +532,21 @@ export default function App() {
               ) : (
                 <div className="review-form">
                   <label className="field-label" htmlFor="transcript">TRANSCRIPT <span>EDITABLE</span></label>
-                  <textarea id="transcript" className="transcript-box" rows={3} value={active.transcript} onChange={(event) => updateTranscript(event.target.value)} />
+                  <textarea id="transcript" className="transcript-box" rows={3} value={active.transcript} onChange={(event) => updateTranscript(event.target.value)} disabled={saving} />
                   {active.extraction_source !== "evon-v3.3" && <div className="demo-hint"><span>✦</span> Sample extraction only. Connect Evon to use model-based extraction.</div>}
 
                   <div className="form-grid">
-                    <label className="form-field"><span className="field-label">PATIENT NAME</span><input value={active.visit.patient_name ?? ""} onChange={(event) => updateVisit({ patient_name: event.target.value })} placeholder="Name" /></label>
-                    <label className="form-field"><span className="field-label">AGE</span><div className="input-unit"><input type="number" min="0" max="130" value={active.visit.age ?? ""} onChange={(event) => updateVisit({ age: event.target.value ? Number(event.target.value) : null })} placeholder="—" /><span>years</span></div></label>
-                    <label className="form-field"><span className="field-label">BLOOD PRESSURE</span><div className="input-unit"><input value={active.visit.vitals?.blood_pressure ?? ""} onChange={(event) => updateVitals({ blood_pressure: event.target.value })} placeholder="— / —" /><span>mmHg</span></div></label>
-                    <label className="form-field"><span className="field-label">TEMPERATURE</span><div className="input-unit"><input type="number" step="0.1" value={active.visit.vitals?.temperature_f ?? ""} onChange={(event) => updateVitals({ temperature_f: event.target.value ? Number(event.target.value) : null })} placeholder="—" /><span>°F</span></div></label>
-                    <label className="form-field span-two"><span className="field-label">SYMPTOMS <small>SEPARATE WITH COMMAS</small></span><input value={(active.visit.symptoms ?? []).join(", ")} onChange={(event) => updateVisit({ symptoms: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} placeholder="e.g. mild fever, nausea" /></label>
-                    <label className="form-field"><span className="field-label">FOLLOW-UP DATE</span><input type="date" value={active.visit.follow_up_date ?? ""} onChange={(event) => updateVisit({ follow_up_date: event.target.value || null })} /></label>
-                    <label className="form-field"><span className="field-label">ORIGINAL DATE PHRASE</span><input value={active.visit.follow_up_phrase ?? ""} onChange={(event) => updateVisit({ follow_up_phrase: event.target.value || null })} placeholder="e.g. Friday" /></label>
+                    <label className="form-field"><span className="field-label">PATIENT NAME</span><input value={active.visit.patient_name ?? ""} onChange={(event) => updateVisit({ patient_name: event.target.value })} placeholder="Name" disabled={saving} /></label>
+                    <label className="form-field"><span className="field-label">AGE</span><div className="input-unit"><input type="number" min="0" max="130" value={active.visit.age ?? ""} onChange={(event) => updateVisit({ age: event.target.value ? Number(event.target.value) : null })} placeholder="—" disabled={saving} /><span>years</span></div></label>
+                    <label className="form-field"><span className="field-label">BLOOD PRESSURE</span><div className="input-unit"><input value={active.visit.vitals?.blood_pressure ?? ""} onChange={(event) => updateVitals({ blood_pressure: event.target.value })} placeholder="— / —" disabled={saving} /><span>mmHg</span></div></label>
+                    <label className="form-field"><span className="field-label">TEMPERATURE</span><div className="input-unit"><input type="number" step="0.1" value={active.visit.vitals?.temperature_f ?? ""} onChange={(event) => updateVitals({ temperature_f: event.target.value ? Number(event.target.value) : null })} placeholder="—" disabled={saving} /><span>°F</span></div></label>
+                    <label className="form-field span-two"><span className="field-label">SYMPTOMS <small>SEPARATE WITH COMMAS</small></span><input value={(active.visit.symptoms ?? []).join(", ")} onChange={(event) => updateVisit({ symptoms: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} placeholder="e.g. mild fever, nausea" disabled={saving} /></label>
+                    <label className="form-field"><span className="field-label">FOLLOW-UP DATE</span><input type="date" value={active.visit.follow_up_date ?? ""} onChange={(event) => updateVisit({ follow_up_date: event.target.value || null })} disabled={saving} /></label>
+                    <label className="form-field"><span className="field-label">ORIGINAL DATE PHRASE</span><input value={active.visit.follow_up_phrase ?? ""} onChange={(event) => updateVisit({ follow_up_phrase: event.target.value || null })} placeholder="e.g. Friday" disabled={saving} /></label>
                   </div>
                   <div className="review-note"><span>✓</span><p>Please check every field. The app records what was said; it does not diagnose or assign urgency.</p></div>
                   <div className="review-actions">
-                    <button className="button button-quiet" onClick={() => void discardCurrent()}>Discard draft</button>
+                    <button className="button button-quiet" onClick={() => void discardCurrent()} disabled={saving}>Discard draft</button>
                     <button className="button button-primary" onClick={() => void saveCurrentVisit()} disabled={saving}>{saving ? "Saving…" : "Confirm & save visit"}<span>→</span></button>
                   </div>
                 </div>
@@ -406,7 +557,7 @@ export default function App() {
           <aside className="right-column">
             <section className="card register-card">
               <div className="card-heading register-heading"><div><div className="step-label"><span>03</span> YOUR RECORDS</div><h2>Visit register</h2></div><span className="count-badge">{visits.length}</span></div>
-              <p className="register-subtitle">Confirmed visits saved on this demo.</p>
+              <p className="register-subtitle">Confirmed demo visits, stored on this device and synced when connected.</p>
               {loadingPage ? <div className="register-empty">Loading register…</div> : visits.length === 0 ? (
                 <div className="register-empty"><span className="register-empty-icon">▤</span><strong>Your register is ready</strong><p>Confirmed visits will appear here.</p></div>
               ) : (
@@ -414,7 +565,7 @@ export default function App() {
                   {visits.map((visit) => (
                     <article className="visit-row" key={visit.id}>
                       <div className="patient-initials">{initials(visit.visit.patient_name)}</div>
-                      <div className="visit-row-main"><div className="visit-name-line"><strong>{visit.visit.patient_name || "Unnamed patient"}</strong><span>{formatDate(visit.created_at)}</span></div><p>{visit.visit.age ? `${visit.visit.age} years` : "Age not entered"}{visit.visit.symptoms.length ? ` · ${visit.visit.symptoms.slice(0, 2).join(", ")}` : " · No symptoms listed"}</p></div>
+                      <div className="visit-row-main"><div className="visit-name-line"><strong>{visit.visit.patient_name || "Unnamed patient"}</strong><span>{formatDate(visit.created_at)}</span></div><p>{visit.visit.age ? `${visit.visit.age} years` : "Age not entered"}{visit.visit.symptoms.length ? ` · ${visit.visit.symptoms.slice(0, 2).join(", ")}` : " · No symptoms listed"}</p>{visit.sync_state === "pending" && <small className="local-sync-note">On this device · sync pending</small>}</div>
                       <span className="saved-check" aria-label="Saved">✓</span>
                     </article>
                   ))}
@@ -425,9 +576,9 @@ export default function App() {
 
             <section className="card model-card">
               <div className="model-card-head"><span className="model-spark">✦</span><div><strong>Voice tools</strong><small>Connected services</small></div></div>
-              <div className="provider-row"><span className="provider-name"><i className={health?.providers.prisma ? "provider-dot ready" : "provider-dot"} />Prisma transcription</span><span className="provider-status">{health?.providers.prisma ? "Ready" : "Setup needed"}</span></div>
-              <div className="provider-row"><span className="provider-name"><i className={health?.providers.evon ? "provider-dot ready" : "provider-dot demo"} />Evon extraction</span><span className="provider-status">{health?.providers.evon ? "Ready" : "Demo mode"}</span></div>
-              <div className="provider-row"><span className="provider-name"><i className={health?.providers.timbre ? "provider-dot ready" : "provider-dot"} />Timbre read-back</span><span className="provider-status">{health?.providers.timbre ? "Ready" : "Setup needed"}</span></div>
+              <div className="provider-row"><span className="provider-name"><i className={health?.providers.prisma ? "provider-dot ready" : "provider-dot"} />Prisma transcription</span><span className="provider-status">{health ? health.providers.prisma ? "Ready" : "Setup needed" : "Backend offline"}</span></div>
+              <div className="provider-row"><span className="provider-name"><i className={health?.providers.evon ? "provider-dot ready" : "provider-dot demo"} />Evon extraction</span><span className="provider-status">{health ? health.providers.evon ? "Ready" : "Demo mode" : "Backend offline"}</span></div>
+              <div className="provider-row"><span className="provider-name"><i className={health?.providers.timbre ? "provider-dot ready" : "provider-dot"} />Timbre read-back</span><span className="provider-status">{health ? health.providers.timbre ? "Ready" : "Setup needed" : "Backend offline"}</span></div>
               <div className="model-footnote">API keys belong in the backend environment file, never in the app.</div>
             </section>
 

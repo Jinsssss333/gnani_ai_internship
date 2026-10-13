@@ -163,6 +163,7 @@ h2 { margin: 9px 0 0; color: #263b34; font-family: Manrope, sans-serif; font-siz
 .visit-name-line strong { overflow: hidden; color: #485b51; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .visit-name-line span { color: #a6afa9; font-size: 8px; white-space: nowrap; }
 .visit-row-main p { overflow: hidden; margin: 5px 0 0; color: #909c95; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.local-sync-note { display: block; margin-top: 4px; color: #a36b23; font-size: 8px; }
 .saved-check { color: #62a077; font-size: 12px; font-weight: 800; }
 .register-footer { display: flex; align-items: center; gap: 7px; margin: 0 -20px; padding: 12px 20px; background: #fbfcfa; color: #a1aaa4; font-size: 9px; }
 .lock-icon { color: #74917c; font-size: 13px; }

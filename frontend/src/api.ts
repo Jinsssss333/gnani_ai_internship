@@ -25,7 +25,7 @@ export async function getVisits(): Promise<VisitRecord[]> {
 
 export async function processAudio(audio: Blob, language: string, id: string): Promise<QueuedVisit> {
   const form = new FormData();
-  form.append("audio_file", audio, `visit-${id}.webm`);
+  form.append("audio_file", audio, `visit-${id}.wav`);
   form.append("language", language);
   const response = await fetch(`${API_BASE}/api/visits/process`, { method: "POST", body: form });
   if (!response.ok) throw new Error(await readError(response));
@@ -53,11 +53,13 @@ export async function getDemoVisit(): Promise<QueuedVisit> {
   };
 }
 
-export async function saveVisit(visit: QueuedVisit): Promise<VisitRecord> {
+export async function saveVisit(visit: VisitRecord): Promise<VisitRecord> {
   const response = await fetch(`${API_BASE}/api/visits`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      id: visit.id,
+      created_at: visit.created_at,
       transcript: visit.transcript,
       language: visit.language,
       extraction_source: visit.extraction_source,

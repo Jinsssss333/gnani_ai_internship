@@ -18,6 +18,7 @@ export interface VisitRecord {
   language: string;
   extraction_source: string;
   visit: VisitFields;
+  sync_state?: "pending" | "synced";
 }
 
 export type QueueState = "waiting" | "processing" | "ready" | "error";

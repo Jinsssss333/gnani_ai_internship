@@ -21,6 +21,8 @@ class VisitFields(BaseModel):
 
 
 class ConfirmVisit(BaseModel):
+    id: str | None = None
+    created_at: str | None = None
     transcript: str
     language: str = "hi-IN"
     visit: VisitFields

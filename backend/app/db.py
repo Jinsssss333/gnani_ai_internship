@@ -34,12 +34,22 @@ def initialize() -> None:
         )
 
 
-def save_visit(transcript: str, language: str, extraction_source: str, visit: dict) -> dict:
-    visit_id = str(uuid4())
-    created_at = datetime.now(timezone.utc).isoformat()
+def save_visit(
+    transcript: str,
+    language: str,
+    extraction_source: str,
+    visit: dict,
+    visit_id: str | None = None,
+    created_at: str | None = None,
+) -> dict:
+    visit_id = visit_id or str(uuid4())
+    created_at = created_at or datetime.now(timezone.utc).isoformat()
     with connect() as db:
         db.execute(
-            "INSERT INTO visits (id, created_at, transcript, language, extraction_source, visit_json) VALUES (?, ?, ?, ?, ?, ?)",
+            """INSERT INTO visits (id, created_at, transcript, language, extraction_source, visit_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET transcript=excluded.transcript, language=excluded.language,
+            extraction_source=excluded.extraction_source, visit_json=excluded.visit_json""",
             (visit_id, created_at, transcript, language, extraction_source, json.dumps(visit)),
         )
     return {

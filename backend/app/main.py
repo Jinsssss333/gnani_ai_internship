@@ -45,9 +45,9 @@ async def health() -> dict:
     return {
         "status": "ok",
         "providers": {
-            "prisma": bool(os.getenv("PRISMA_API_URL") and os.getenv("PRISMA_API_KEY_ID")),
-            "evon": bool(os.getenv("EVON_CHAT_COMPLETIONS_URL")),
-            "timbre": bool(os.getenv("TIMBRE_API_URL") and os.getenv("TIMBRE_API_KEY")),
+            "prisma": bool(os.getenv("PRISMA_API_KEY_ID") or os.getenv("GNANI_API_KEY_ID")),
+            "evon": bool(os.getenv("EVON_CHAT_COMPLETIONS_URL") or os.getenv("EVON_INFERENCE_ENDPOINT")),
+            "timbre": bool(os.getenv("TIMBRE_API_KEY_ID") or os.getenv("GNANI_API_KEY_ID")),
         },
     }
 
@@ -55,7 +55,7 @@ async def health() -> dict:
 @app.post("/api/visits/process")
 async def process_audio(
     audio_file: UploadFile = File(...),
-    language: str = Form("hi-IN"),
+    language: str = Form(os.getenv("GNANI_DEFAULT_LANG", "hi-IN")),
 ) -> dict:
     audio = await audio_file.read()
     if not audio:
@@ -111,6 +111,8 @@ async def confirm_visit(payload: ConfirmVisit) -> dict:
         language=payload.language,
         extraction_source=payload.extraction_source,
         visit=payload.visit.model_dump(),
+        visit_id=payload.id,
+        created_at=payload.created_at,
     )
 
 

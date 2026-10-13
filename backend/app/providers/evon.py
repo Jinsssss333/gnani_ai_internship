@@ -29,7 +29,8 @@ def _demo_extract(transcript: str) -> VisitFields:
     temp_match = re.search(r"\b(?:temperature|temp)\s*(?:is|of)?\s*(\d{2,3}(?:\.\d+)?)\b", lower)
     follow_match = re.search(
         r"\b(?:follow[ -]?up|review)\s*(?:on|for)?\s*(?:set|scheduled)?\s*([a-z]+(?:\s+\d{1,2})?)\b",
-        lower,
+        text,
+        re.IGNORECASE,
     )
 
     name = None
@@ -75,7 +76,10 @@ def _extract_json(content: str) -> dict:
 
 
 async def extract(transcript: str, language: str) -> tuple[VisitFields, str]:
-    endpoint = os.getenv("EVON_CHAT_COMPLETIONS_URL", "").strip()
+    endpoint = (
+        os.getenv("EVON_CHAT_COMPLETIONS_URL")
+        or os.getenv("EVON_INFERENCE_ENDPOINT", "")
+    ).strip()
     if not endpoint:
         return _demo_extract(transcript), "demo-parser"
 
@@ -84,7 +88,7 @@ async def extract(transcript: str, language: str) -> tuple[VisitFields, str]:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     payload = {
-        "model": os.getenv("EVON_MODEL", "evon-v3.3"),
+        "model": os.getenv("EVON_MODEL") or os.getenv("EVON_MODEL_NAME", "gnani-evon-v3.3"),
         "temperature": 0,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},

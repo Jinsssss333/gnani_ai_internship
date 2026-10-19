@@ -8,6 +8,7 @@ export interface VisitFields {
   symptoms: string[];
   follow_up_date: string | null;
   follow_up_phrase: string | null;
+  follow_up_status?: "pending" | "completed" | "missed";
   notes: string | null;
 }
 
@@ -18,6 +19,17 @@ export interface VisitRecord {
   language: string;
   extraction_source: string;
   visit: VisitFields;
+  sync_state?: "pending" | "synced";
+  deleted_at?: string | null;
+}
+
+export interface AuditEvent {
+  id: string;
+  visit_id: string;
+  occurred_at: string;
+  action: "created" | "updated" | "deleted" | "follow_up_completed" | "follow_up_missed";
+  summary: string;
+  actor: string;
   sync_state?: "pending" | "synced";
 }
 
@@ -31,5 +43,5 @@ export interface QueuedVisit extends VisitRecord {
 
 export interface ProviderHealth {
   status: string;
-  providers: { prisma: boolean; evon: boolean; timbre: boolean };
+  providers: { prisma: boolean; gemini: boolean; evon: boolean; timbre: boolean };
 }

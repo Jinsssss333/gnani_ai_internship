@@ -1,18 +1,20 @@
-import type { QueuedVisit, VisitRecord } from "./types";
+import type { AuditEvent, QueuedVisit, VisitRecord } from "./types";
 
 const DB_NAME = "swarsathi-local";
 const QUEUE_STORE = "queued-visits";
 const REGISTER_STORE = "saved-visits";
+const AUDIT_STORE = "audit-events";
 let database: Promise<IDBDatabase> | undefined;
 
 function openDatabase(): Promise<IDBDatabase> {
   if (database) return database;
   database = new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 2);
+    const request = indexedDB.open(DB_NAME, 3);
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(QUEUE_STORE)) db.createObjectStore(QUEUE_STORE, { keyPath: "id" });
       if (!db.objectStoreNames.contains(REGISTER_STORE)) db.createObjectStore(REGISTER_STORE, { keyPath: "id" });
+      if (!db.objectStoreNames.contains(AUDIT_STORE)) db.createObjectStore(AUDIT_STORE, { keyPath: "id" });
     };
     request.onsuccess = () => {
       const db = request.result;
@@ -82,5 +84,24 @@ export async function putSavedVisit(visit: VisitRecord): Promise<void> {
     transaction.objectStore(REGISTER_STORE).put(visit);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error ?? new Error("Could not save the visit on this device."));
+  });
+}
+
+export async function listAuditEvents(): Promise<AuditEvent[]> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(AUDIT_STORE, "readonly").objectStore(AUDIT_STORE).getAll();
+    request.onsuccess = () => resolve((request.result as AuditEvent[]).sort((a, b) => b.occurred_at.localeCompare(a.occurred_at)));
+    request.onerror = () => reject(request.error ?? new Error("Could not load the audit trail."));
+  });
+}
+
+export async function putAuditEvent(event: AuditEvent): Promise<void> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(AUDIT_STORE, "readwrite");
+    transaction.objectStore(AUDIT_STORE).put(event);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error ?? new Error("Could not save the audit event."));
   });
 }

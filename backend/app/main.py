@@ -14,7 +14,7 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from app import db
 from app.providers import evon, prisma, timbre
-from app.schemas import ConfirmVisit, TtsRequest
+from app.schemas import AuditEvent, ConfirmVisit, TtsRequest
 
 
 @asynccontextmanager
@@ -35,7 +35,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
 
@@ -46,6 +46,7 @@ async def health() -> dict:
         "status": "ok",
         "providers": {
             "prisma": bool(os.getenv("PRISMA_API_KEY_ID") or os.getenv("GNANI_API_KEY_ID")),
+            "gemini": bool(os.getenv("GEMINI_API_KEY")),
             "evon": bool(os.getenv("EVON_CHAT_COMPLETIONS_URL") or os.getenv("EVON_INFERENCE_ENDPOINT")),
             "timbre": bool(os.getenv("TIMBRE_API_KEY_ID") or os.getenv("GNANI_API_KEY_ID")),
         },
@@ -113,12 +114,30 @@ async def confirm_visit(payload: ConfirmVisit) -> dict:
         visit=payload.visit.model_dump(),
         visit_id=payload.id,
         created_at=payload.created_at,
+        deleted_at=payload.deleted_at,
     )
 
 
 @app.get("/api/visits")
 async def get_visits() -> list[dict]:
     return db.list_visits()
+
+
+@app.delete("/api/visits/{visit_id}")
+async def delete_visit(visit_id: str) -> dict:
+    if not db.soft_delete_visit(visit_id):
+        raise HTTPException(status_code=404, detail="Visit was not found or is already deleted.")
+    return {"status": "deleted", "id": visit_id}
+
+
+@app.get("/api/audit")
+async def get_audit_events() -> list[dict]:
+    return db.list_audit_events()
+
+
+@app.post("/api/audit")
+async def create_audit_event(payload: AuditEvent) -> dict:
+    return db.record_audit_event(payload.model_dump())
 
 
 @app.post("/api/tts")

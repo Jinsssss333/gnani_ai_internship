@@ -17,6 +17,7 @@ class VisitFields(BaseModel):
     symptoms: list[str] = Field(default_factory=list)
     follow_up_date: str | None = None
     follow_up_phrase: str | None = None
+    follow_up_status: str | None = None
     notes: str | None = None
 
 
@@ -27,6 +28,16 @@ class ConfirmVisit(BaseModel):
     language: str = "hi-IN"
     visit: VisitFields
     extraction_source: str = "unknown"
+    deleted_at: str | None = None
+
+
+class AuditEvent(BaseModel):
+    id: str
+    visit_id: str
+    occurred_at: str
+    action: str
+    summary: str
+    actor: str = "Demo ASHA worker"
 
 
 class TtsRequest(BaseModel):

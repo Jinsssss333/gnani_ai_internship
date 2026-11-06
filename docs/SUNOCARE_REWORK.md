@@ -41,7 +41,7 @@ The system always separates: **raw transcript · interpreted value · evidence q
 | Mode | Needs | Use |
 |---|---|---|
 | **Call mode (primary)** | Cellular coverage on worker side; backend internet for Prisma/Timbre | "No app, no typing, no mobile data — just call and speak." Prototyped as a web call simulator. |
-| **Offline draft mode (fallback)** | Nothing at capture time | Audio saved in IndexedDB; transcription & extraction happen after reconnection. |
+| **Offline draft mode (fallback)** | Nothing at capture time | Prompts play from **pre-generated Timbre audio cached on device**; answers saved per question in IndexedDB; transcription & extraction run after reconnection and the visit lands in **Needs review** for the worker to confirm. *(Updated — see §19 F3.)* |
 
 Never claim AI transcription works offline.
 
@@ -174,7 +174,7 @@ audit_events
 
 ---
 
-## 8. API
+## 8. API (summary — full contracts in §21)
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -205,7 +205,7 @@ Provider keys stay on the backend only.
 - No inference of unstated facts. Unclear → `value: null, needs_confirmation: true`.
 - Symptoms: split reported vs negated ("no cough"), keep qualifiers ("mild"). No diagnosis.
 - Spoken self-corrections ("120 by 80, sorry 110 by 70") → take the last value, quote both.
-- Dates: store phrase ("Friday"); convert to ISO only if explicit; otherwise confirm.
+- Dates: store the phrase ("Friday") **and** a backend-computed candidate ISO date relative to the visit date (next occurrence). Read back the full date ("Friday, 13 November") and require confirmation. Never save an unconfirmed date. *(Updated — see §19 F6.)*
 - Temperature with no unit → null + ask. Never assume Fahrenheit.
 - Local parser: never guess a name from the first word; label as `demo-parser`.
 - DTMF digits bypass the LLM entirely.
@@ -245,7 +245,7 @@ Provider keys stay on the backend only.
 
 ---
 
-## 12. Repository Structure
+## 12. Repository Structure (superseded by §22)
 
 ```
 gnani_ai_internship/
@@ -373,3 +373,265 @@ Report real counts, including failures.
 ## 18. Limitations (state openly)
 
 Prototype, synthetic data, no auth, demo actor labels, simulated SMS, web call simulator instead of real telephony, cloud STT/TTS need connectivity, not a replacement for government health systems.
+
+---
+---
+
+# PART B — Full Build Specification
+
+Sections 19–28 were added after a review of sections 1–18. They fill gaps in the original workflow and contain enough detail for a full build. **If anything in sections 1–18 conflicts with Part B, Part B wins.**
+
+## 19. Flaws Found in the Original Workflow & Fixes
+
+| # | Flaw | Why it breaks | Fix |
+|---|---|---|---|
+| F1 | **Visit codes come from nowhere.** No table backs `4821`. | Unknown/mistyped codes silently create junk visits. | Add `visit_cards` seed table (synthetic). Validate code; on miss: *"Code not found. Say it again or press 0 to start a new unlinked visit."* Read back code digit-by-digit. |
+| F2 | **Greeting before language is chosen** — which language does Timbre speak? | First prompt can't be in the user's language. | Greeting is a short multilingual pre-recorded clip (each option spoken in its own language). Remember last language on device; offer "press 1 to continue in Malayalam". |
+| F3 | **Offline mode had no guided flow.** Timbre is cloud-only, so prompts couldn't play offline. | Offline = back to unstructured notes. | Generate all fixed prompts at build time (`scripts/generate_prompts.py` → `frontend/public/prompts/{lang}/{prompt_id}.mp3`), cache via service worker. Offline flow runs the **same question state machine on the client** (shared `questions.json`), stores per-question audio, then `POST /api/sync/drafts` on reconnect → visit status `needs_review`. |
+| F4 | **Spoken "one"/"yes"/"ശരി"/"haan" for confirm** were sent through an LLM. | Slow, costly, error-prone for 1-word replies. | Deterministic **intent matcher** (`services/intents.py`) with per-language keyword lists for confirm/correct/repeat/skip/yes/no + digit words. LLM only for open fields (age-in-words fallback, symptoms, date phrases, notes). |
+| F5 | **No retry limit.** Bad audio loops forever. | Worker gives up. | Max 2 attempts per field → 3rd time offer keypad entry or "press 9 to mark unresolved". Unresolved fields become `needs_review` and show up in supervisor's view. |
+| F6 | **"Friday" never becomes a date** → follow-up can't be grouped as today/overdue. | Follow-ups list breaks. | Backend resolves candidate date relative to the visit date; read back the full date; worker confirms. |
+| F7 | **`visit_done = no`** path undefined. | Flow asks age/symptoms for a visit that never happened. | Branch: ask reason (house locked / patient away / refused / other) → offer reschedule date → save as `visit_status=not_completed` with follow-up. |
+| F8 | **Prompts are English text.** Malayalam/Hindi/Tamil translation unspecified. | Runtime machine translation is unreliable. | Hand-authored prompt strings in `shared/i18n/{lang}.json`. Number/date read-back via `services/speakable.py` (per-language number words). Mark untested languages as "beta" in the UI. |
+| F9 | **Prisma clip limit not enforced.** | Long answers fail. | Recorder auto-stops at 25 s with visible countdown; VAD silence auto-stop after 2 s silence. |
+| F10 | **Duplicate submissions** on flaky network. | Same answer saved twice / state skips a question. | Client generates `answer_id` (UUID); `/answer` is idempotent on `(session_id, answer_id)`. |
+| F11 | **Session abandoned mid-call** (call drop, tab closed). | Partial data lost or orphaned. | Sessions persisted after each step; `GET /api/calls/active` lets the worker resume within 2 hours. After that → `abandoned`; partial answers kept for review. |
+| F12 | **Timbre latency/cost on every prompt.** | Slow call experience. | Fixed prompts are pre-generated; dynamic read-backs cached by `sha256(lang+voice+text)` in `backend/cache/tts/`. |
+| F13 | **No role separation** between worker and supervisor. | Demo is confusing. | Simple role toggle (Worker / Supervisor) stored locally; clearly labelled "demo role — no authentication". |
+| F14 | **Audio retention** unspecified. | Privacy risk even with synthetic data. | Store audio under `backend/storage/audio/{session}/{answer}.wav`; delete it 7 days after confirmation (configurable); evidence quote text is kept. |
+| F15 | **No provider mocks.** | Tests and demo depend on live APIs and credits. | `PROVIDER_MODE=live|mock` env var. Mock Prisma returns fixture transcripts keyed by audio filename; mock Timbre returns a silent WAV. CI always runs mock. |
+| F16 | **Sync conflict case had no UI.** | 409 errors were silently dropped. | `conflict` sync state + a banner offering "Keep mine / Use server". |
+
+## 20. Detailed Architecture
+
+### 20.1 Components & responsibilities
+
+| Layer | Module | Responsibility |
+|---|---|---|
+| Shared | `shared/questions.json` | Single source of truth for question IDs, order, branching, answer type, keypad map, retry limit. Imported by frontend and backend. |
+| Shared | `shared/i18n/{en,ml,hi,ta}.json` | Prompt text per language. |
+| Frontend | `CallEngine` (`hooks/useCallSession.ts`) | Online: thin client over backend session API. Offline: local state machine from `questions.json`. |
+| Frontend | `useSpeechRecorder` | Mic → 16 kHz mono WAV, 25 s cap, silence auto-stop, waveform levels. |
+| Frontend | `usePromptPlayer` | Plays cached prompt mp3 or `/api/tts` result; queue + interrupt (barge-in by tapping mic). |
+| Frontend | `useOfflineQueue` + `storage.ts` | IndexedDB stores: `drafts`, `answers_audio`, `visits`, `audit`, `outbox`. Retry with backoff on `online` event. |
+| Backend | `call_flow.py` | Pure state machine: `next(state, event) -> (state, prompt)`. No I/O, so it's fully unit-testable. |
+| Backend | `services/intents.py` | Deterministic keyword/digit matching per language. |
+| Backend | `services/extraction.py` | Chooses provider (Gemini → Evon → demo parser), builds per-field prompt, validates JSON. |
+| Backend | `services/validation.py` | Pydantic validators: age 0–120, BP `\d{2,3}/\d{2,3}`, temp requires unit, date ISO + not in past for follow-up. |
+| Backend | `services/speakable.py` | Converts values into speakable read-back text per language. |
+| Backend | `services/dates.py` | Relative-date resolution ("Friday", "next Monday", "naale", "kal") → candidate ISO date. |
+| Backend | `services/sync.py` | Versioned upsert, conflict detection, draft batch processing. |
+| Backend | `services/followups.py` | Create/group/update follow-ups; compute overdue nightly-on-read. |
+| Backend | `services/audit.py` | Append-only audit with before/after JSON. |
+| Backend | `providers/*` | HTTP adapters with timeouts (STT 20 s, TTS 10 s, LLM 15 s), 1 retry, typed errors. |
+
+### 20.2 Sequence — online answer
+
+```
+Worker      Frontend               Backend                    Prisma   LLM    Timbre
+  │ speak     │                       │                          │        │       │
+  │──────────▶│ record WAV (≤25s)     │                          │        │       │
+  │           │ POST /answer(audio,   │                          │        │       │
+  │           │   answer_id)─────────▶│ idempotency check        │        │       │
+  │           │                       │──── transcribe ─────────▶│        │       │
+  │           │                       │◀─── transcript ──────────│        │       │
+  │           │                       │ intents.match()? ──yes──▶ value   │       │
+  │           │                       │   └─no──▶ extract ───────────────▶│       │
+  │           │                       │◀──────────── JSON ────────────────│       │
+  │           │                       │ validate → speakable → tts(cache)────────▶│
+  │           │◀── {transcript,value, │◀───────────────────────────────── audio ──│
+  │           │    evidence,readback} │                                           │
+  │◀── play readback + show evidence ─│                                           │
+  │ press 1   │ POST /action confirm ▶│ state→next question, audit                │
+```
+
+### 20.3 Sequence — offline draft
+
+```
+No signal → client CallEngine runs questions.json locally
+  → plays cached prompt mp3s → records one WAV per question → IndexedDB(drafts)
+  → shows "Saved on device — will process when online"
+Reconnect → POST /api/sync/drafts (multipart, draft_id idempotent)
+  → backend transcribes + extracts each answer → visit.status = needs_review
+  → worker sees "1 visit needs your review" → per-field confirm/correct → confirmed
+```
+
+### 20.4 Error handling matrix
+
+| Failure | User sees / hears | System does |
+|---|---|---|
+| Prisma timeout/5xx | "Couldn't hear that clearly. Saved on this device." | Keep audio, retry once, else queue as draft |
+| Empty transcript | "I didn't catch that. Please say it again." | Counts as an attempt (F5) |
+| LLM invalid JSON | Falls back to next provider → demo parser → `needs_confirmation` | Log `extraction_source` |
+| Validation fail (age 300) | "Age 300 seems wrong. Please say it again." | No save |
+| Timbre fail | Text shown on screen + cached generic beep prompt | Continue flow |
+| Backend unreachable | Switch to offline draft mode automatically | Outbox retry |
+| 409 conflict | Conflict banner | Keep both versions until resolved |
+
+## 21. API Contracts
+
+```jsonc
+// POST /api/calls/start
+{ "language_code": "ml-IN", "visit_code": "4821" }
+→ 200 { "session_id": "uuid", "state": "Q_VISIT_DONE",
+        "prompt": { "id": "visit_done", "text": "...", "audio_url": "/prompts/ml/visit_done.mp3" },
+        "expects": { "type": "boolean", "keypad": {"1": true, "2": false} },
+        "visit_card": { "code": "4821", "label": "Synthetic household #21" } }
+→ 404 { "error": "visit_code_not_found" }
+
+// POST /api/calls/{id}/answer   (multipart: audio | form: text | form: dtmf)
+{ "answer_id": "uuid", "question_id": "age", "dtmf": null }
+→ 200 { "transcript": "ഇരുപത്തിയാറ് വയസ്സ്", "value": 26,
+        "evidence_quote": "ഇരുപത്തിയാറ്", "extraction_source": "intent|gemini|evon|demo-parser",
+        "needs_confirmation": true, "attempt": 1,
+        "readback": { "text": "Age 26. Press 1 to confirm, 2 to correct.", "audio_url": "/api/tts/cache/ab12.wav" },
+        "options": ["confirm","correct","repeat"] }
+
+// POST /api/calls/{id}/action
+{ "action": "confirm|correct|repeat|skip|unresolved", "field": "follow_up_date" }
+→ 200 { "state": "Q_FOLLOWUP_NEEDED", "prompt": {...} }
+
+// POST /api/calls/{id}/finalize
+→ 200 { "visit": {..., "version": 1}, "follow_up": {...}, "sms_preview": "SunoCare: visit 4821 saved..." }
+
+// PUT /api/visits/{id}
+{ "version": 3, "patch": {...} } → 200 {version: 4} | 409 {server_version: 4, server_visit: {...}}
+
+// POST /api/sync/drafts  (multipart: draft.json + audio files)
+→ 200 { "draft_id": "uuid", "visit_id": "uuid", "status": "needs_review" }
+
+// GET /api/calls/active?device_id=... → resumable session or 204
+// GET /api/health → { prisma: "ok|missing|error", timbre: ..., gemini: ..., evon: ..., mode: "live|mock" }
+```
+
+## 22. Final Repository Structure
+
+```
+gnani_ai_internship/
+├── README.md
+├── docs/  SUNOCARE_REWORK.md  EVALUATION.md  ARCHITECTURE.png (export of §20)
+├── shared/
+│   ├── questions.json
+│   └── i18n/ en.json  ml.json  hi.json  ta.json
+├── scripts/
+│   ├── generate_prompts.py      # Timbre → frontend/public/prompts/{lang}/*.mp3
+│   ├── seed.py                  # synthetic visit_cards + demo visits
+│   └── run_eval.py              # eval/cases → results table
+├── eval/  cases.jsonl  audio/  expected/
+├── frontend/
+│   ├── index.html  vite.config.ts  package.json
+│   ├── public/  sw.js  manifest.webmanifest  prompts/
+│   └── src/
+│       ├── main.tsx  App.tsx  router.tsx  api.ts  storage.ts  types.ts
+│       ├── engine/  callMachine.ts  questions.ts      # offline state machine
+│       ├── hooks/   useCallSession.ts  useSpeechRecorder.ts  usePromptPlayer.ts
+│       │            useOfflineQueue.ts  useOnline.ts  useRole.ts
+│       ├── screens/ Home.tsx  Call.tsx  Correction.tsx  FinalReview.tsx  Saved.tsx
+│       │            Register.tsx  VisitDetail.tsx  FollowUps.tsx  Audit.tsx
+│       │            NeedsReview.tsx  Supervisor.tsx
+│       ├── components/ BigMicButton  Waveform  Keypad  QuestionCard  EvidenceChip
+│       │            FieldRow  StatusChip  SyncBanner  ConflictBanner  BottomNav  Toast
+│       └── styles/  tokens.css  base.css
+└── backend/
+    ├── requirements.txt  .env.example  pytest.ini
+    ├── app/
+    │   ├── main.py  config.py  db.py  models.py  schemas.py
+    │   ├── call_flow.py
+    │   ├── routers/  calls.py  visits.py  followups.py  audit.py  sync.py  tts.py  health.py
+    │   ├── services/ intents.py  extraction.py  validation.py  speakable.py  dates.py
+    │   │             sync.py  followups.py  audit.py  audio_store.py
+    │   └── providers/ base.py  prisma.py  timbre.py  gemini.py  evon.py  demo_parser.py  mock.py
+    ├── storage/audio/   cache/tts/      # gitignored
+    └── tests/ test_call_flow.py  test_intents.py  test_extraction.py  test_dates.py
+               test_validation.py  test_sync.py  test_api.py  fixtures/
+```
+
+**Migration from current code:** `providers/evon.py`, which currently mixes Gemini, Evon and the demo parser, gets split into `gemini.py`, `evon.py` and `demo_parser.py`, with selection moved to `services/extraction.py`. `App.tsx` (about 1,000 lines) gets split into `screens/` and `components/`. `storage.ts` keeps IndexedDB, with new stores added. `/api/visits/process` stays temporarily for the free-note mode and is removed after M3.
+
+## 23. `questions.json` (shape)
+
+```json
+{
+  "version": 1,
+  "max_attempts": 2,
+  "flow": [
+    { "id": "visit_done", "type": "boolean", "keypad": {"1": true, "2": false},
+      "next": { "true": "age", "false": "not_done_reason" } },
+    { "id": "not_done_reason", "type": "enum",
+      "options": {"1":"house_locked","2":"patient_away","3":"refused","4":"other"},
+      "next": "followup_date" },
+    { "id": "age", "type": "integer", "min": 0, "max": 120, "keypad": "digits", "next": "symptoms" },
+    { "id": "symptoms", "type": "symptoms", "optional": true, "next": "followup_needed" },
+    { "id": "followup_needed", "type": "boolean", "keypad": {"1": true, "2": false},
+      "next": { "true": "followup_date", "false": "notes" } },
+    { "id": "followup_date", "type": "date_phrase", "next": "notes" },
+    { "id": "notes", "type": "free_text", "optional": true, "next": "FINAL_REVIEW" }
+  ]
+}
+```
+
+## 24. State Machine Rules
+
+- States: `LANGUAGE → VISIT_CODE → <question ids…> → FINAL_REVIEW → SAVED`; per question sub-states `ASKING → LISTENING → PROCESSING → READBACK`.
+- Events: `answer`, `confirm`, `correct`, `repeat`, `skip`, `unresolved`, `timeout`, `restart`.
+- `correct` from FINAL_REVIEW → asks "which detail?" (keypad list of answered fields) → re-asks only that field → returns to FINAL_REVIEW, **not** the next question.
+- Branch changes: if `followup_needed` is corrected from yes to no, the dependent `followup_date` is dropped and an audit entry is written.
+- `skip` is allowed only when `optional: true`.
+- `finalize` is blocked while any required field is neither confirmed nor marked `unresolved`.
+
+## 25. UI Specification
+
+- **Tokens:** `--accent #0F766E`, `--ok #15803D`, `--warn #B45309`, `--err #B91C1C`, `--muted #6B7280`, `--bg #F8FAFC`, `--surface #FFFFFF`. Font: Inter / Noto Sans Malayalam / Noto Sans Devanagari / Noto Sans Tamil. Body 18 px on the call screen, 16 px elsewhere.
+- **Call screen layout (top → bottom):** progress dots (question 3 of 6) · question text (24 px) · prompt replay button · big mic (96 px) with waveform ring · live status ("Listening… 0:07 / 0:25") · result card (value + evidence chip) · action row [✓ Confirm 1] [✎ Correct 2] [↻ Repeat 3] · collapsible on-screen keypad.
+- **Evidence chip:** the quote with the matched words highlighted; tapping it replays the answer audio.
+- **Status chips:** Synced · Saved on device · Needs review · Sync failed · Conflict.
+- **Accessibility:** every action works by voice, keypad and touch; contrast ≥ 4.5:1; no meaning conveyed by colour alone (each status has an icon and a label); respect `prefers-reduced-motion`.
+
+## 26. Testing Strategy
+
+| Level | What | Tool |
+|---|---|---|
+| Unit | `call_flow`, `intents`, `dates`, `validation`, `speakable` | pytest |
+| Provider | Adapters against recorded fixtures (`PROVIDER_MODE=mock`) | pytest + respx |
+| API | Full call: start → answers → correct → finalize | FastAPI TestClient |
+| Sync | Stale version → 409; pending never falsely synced; draft idempotency | pytest |
+| Frontend | Offline engine transitions, outbox retry | Vitest |
+| E2E (manual) | Demo script in Malayalam and English, airplane-mode draft | checklist in `docs/EVALUATION.md` |
+
+## 27. Updated Milestones (with acceptance criteria)
+
+| Day | Milestone | Done when |
+|---|---|---|
+| Nov 7 | **M0** Rename, split modules, mock mode, `shared/questions.json`, i18n files | `rg -i swarsathi` returns nothing user-facing; `pytest` green in mock mode |
+| Nov 7 | **M1** Backend state machine + call routers + intents | Full demo script runs via API in mock mode |
+| Nov 8 | **M2** Call screen UI, recorder, prompt player, Prisma/Timbre live | Demo script works by voice in at least one language |
+| Nov 8 | **M3** Evidence, correction, branching, retry limits, audit | Friday→Monday correction works; audit shows the before/after diff |
+| Nov 9 AM | **M4** Offline engine, cached prompts, draft sync, versioned sync, conflict banner | Airplane-mode visit → reconnect → Needs review → confirmed |
+| Nov 9 PM | **M5** Follow-ups, Register, Supervisor, polish, eval run, demo video, **publish post** | EVALUATION.md has real numbers; post is live |
+| Nov 10 | Submit + buffer | Checklist in §17 complete |
+
+**Cut list if behind:** Tamil/Hindi → beta labels only · Supervisor screen → reuse Register with filters · conflict banner → "Use server" only · audio replay seek → full-clip replay.
+
+## 28. Workflow Summary (one view)
+
+```
+                 ┌──────────── Worker (voice / keypad / touch) ────────────┐
+Start ─▶ Language ─▶ Visit code ─(not found)─▶ retry / unlinked visit
+                         │
+                         ▼
+        ┌──── for each question in questions.json ────┐
+        │ Ask (cached prompt) → Listen (≤25s)         │
+        │ → Prisma → intent match │ LLM extract       │
+        │ → validate → read back (Timbre, cached)     │
+        │ → 1 confirm │ 2 correct │ 3 repeat │ 9 skip  │
+        │   (2 failed attempts → keypad / unresolved) │
+        └──────────────────┬──────────────────────────┘
+                           ▼
+           Final review (correct any field → back here)
+                           ▼
+        Finalize → visit v1 + follow-up + audit + SMS preview
+                           ▼
+ Online ─▶ synced ✓        Offline ─▶ outbox → reconnect → process → Needs review → confirm
+                           ▼
+       Follow-ups (overdue / today / upcoming) → Supervisor view
+```

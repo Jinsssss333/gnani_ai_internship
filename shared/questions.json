@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "max_attempts": 2,
+  "flow": [
+    {
+      "id": "visit_done",
+      "type": "boolean",
+      "prompt": "Did you complete the home visit today?",
+      "keypad": { "1": true, "2": false },
+      "next": { "true": "age", "false": "not_done_reason" }
+    },
+    {
+      "id": "not_done_reason",
+      "type": "enum",
+      "prompt": "Why could the visit not be completed?",
+      "options": { "1": "house_locked", "2": "patient_away", "3": "refused", "4": "other" },
+      "next": "followup_date"
+    },
+    {
+      "id": "age",
+      "type": "integer",
+      "prompt": "What is the patient's age?",
+      "min": 0,
+      "max": 120,
+      "next": "symptoms"
+    },
+    {
+      "id": "symptoms",
+      "type": "symptoms",
+      "prompt": "Are there fever, cough, vomiting, weakness, or other symptoms?",
+      "optional": true,
+      "next": "followup_needed"
+    },
+    {
+      "id": "followup_needed",
+      "type": "boolean",
+      "prompt": "Is a follow-up needed?",
+      "keypad": { "1": true, "2": false },
+      "next": { "true": "followup_date", "false": "notes" }
+    },
+    {
+      "id": "followup_date",
+      "type": "date_phrase",
+      "prompt": "When is the follow-up?",
+      "next": "notes"
+    },
+    {
+      "id": "notes",
+      "type": "free_text",
+      "prompt": "Any extra note?",
+      "optional": true,
+      "next": "FINAL_REVIEW"
+    }
+  ]
+}

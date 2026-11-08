@@ -1,6 +1,6 @@
 import type { AuditEvent, QueuedVisit, VisitRecord } from "./types";
 
-const DB_NAME = "swarsathi-local";
+const DB_NAME = "sunocare-local";
 const QUEUE_STORE = "queued-visits";
 const REGISTER_STORE = "saved-visits";
 const AUDIT_STORE = "audit-events";
@@ -24,7 +24,7 @@ function openDatabase(): Promise<IDBDatabase> {
       };
       resolve(db);
     };
-    request.onblocked = () => reject(new Error("Reload SwarSathi to finish updating its local storage."));
+    request.onblocked = () => reject(new Error("Reload SunoCare to finish updating its local storage."));
     request.onerror = () => reject(request.error ?? new Error("Could not open local visit storage."));
   });
   return database;

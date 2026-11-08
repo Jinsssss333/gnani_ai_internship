@@ -43,3 +43,19 @@ class AuditEvent(BaseModel):
 class TtsRequest(BaseModel):
     text: str = Field(min_length=1, max_length=500)
     language: str = "hi-IN"
+
+
+class CallStartRequest(BaseModel):
+    language_code: str = "hi-IN"
+    visit_code: str = Field(min_length=4, max_length=8, pattern=r"^\d+$")
+
+
+class CallAnswerRequest(BaseModel):
+    answer_id: str = Field(min_length=1, max_length=100)
+    question_id: str
+    text: str | None = Field(default=None, max_length=500)
+    dtmf: str | None = Field(default=None, max_length=1)
+
+
+class CallActionRequest(BaseModel):
+    action: str = Field(pattern=r"^(confirm|correct|repeat|skip|unresolved)$")

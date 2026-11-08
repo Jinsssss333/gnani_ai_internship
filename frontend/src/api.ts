@@ -2,6 +2,26 @@ import type { AuditEvent, ProviderHealth, QueuedVisit, VisitRecord } from "./typ
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 
+export type GuidedAnswer = {
+  answer_id: string;
+  question_id: string;
+  transcript: string;
+  value: unknown;
+  evidence_quote: string;
+  confirmed: boolean;
+  needs_confirmation: boolean;
+  unresolved?: boolean;
+};
+
+export type CallSession = {
+  session_id: string;
+  state: string;
+  status: string;
+  visit_code: string;
+  answers: Record<string, GuidedAnswer>;
+  prompt?: { id: string; text: string; expects: { type: string; keypad?: Record<string, string | boolean>; optional?: boolean } };
+};
+
 async function readError(response: Response): Promise<string> {
   try {
     const body = await response.json();
@@ -15,6 +35,30 @@ export async function getHealth(): Promise<ProviderHealth> {
   const response = await fetch(`${API_BASE}/api/health`);
   if (!response.ok) throw new Error(await readError(response));
   return response.json() as Promise<ProviderHealth>;
+}
+
+export async function startCall(language_code: string, visit_code: string): Promise<CallSession> {
+  const response = await fetch(`${API_BASE}/api/calls/start`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ language_code, visit_code }) });
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json() as Promise<CallSession>;
+}
+
+export async function answerCall(sessionId: string, answer_id: string, question_id: string, text?: string, dtmf?: string): Promise<CallSession> {
+  const response = await fetch(`${API_BASE}/api/calls/${encodeURIComponent(sessionId)}/answer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ answer_id, question_id, text, dtmf }) });
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json() as Promise<CallSession>;
+}
+
+export async function actOnCall(sessionId: string, action: "confirm" | "correct" | "repeat" | "skip"): Promise<CallSession> {
+  const response = await fetch(`${API_BASE}/api/calls/${encodeURIComponent(sessionId)}/action`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json() as Promise<CallSession>;
+}
+
+export async function finalizeCall(sessionId: string): Promise<{ visit: VisitRecord }> {
+  const response = await fetch(`${API_BASE}/api/calls/${encodeURIComponent(sessionId)}/finalize`, { method: "POST" });
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json() as Promise<{ visit: VisitRecord }>;
 }
 
 export async function getVisits(): Promise<VisitRecord[]> {

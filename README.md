@@ -1,13 +1,13 @@
-# SwarSathi — ASHA voice visit register
+# SunoCare — Guided ASHA visit register
 
-SwarSathi is a mobile-first web prototype for capturing a home-visit note by voice, reviewing the structured fields, and saving a synthetic/demo register entry. The app can hold a recording in the browser while offline; transcription and model processing happen after the device reconnects.
+SunoCare is a mobile-first, guided voice prototype for capturing a synthetic ASHA home visit one question at a time. A worker hears a question, answers by voice or keypad, reviews the evidence and interpreted value, then confirms or corrects it before final save. The legacy free-note screen remains during the staged migration.
 
 ## Stack
 
 - **Frontend:** React, TypeScript, Vite, browser `MediaRecorder`, a small service worker, and IndexedDB for the local visit queue.
 - **Backend:** Python, FastAPI, Pydantic, HTTPX, and SQLite.
 - **AI providers:** Gnani Prisma for transcription, Gemini for structured extraction, and Gnani Timbre for read-back audio.
-- **Visit history:** IndexedDB for offline-first visit and audit storage; SQLite for synced records and audit events.
+- **Visit history:** IndexedDB for offline-first visit and audit storage; SQLite for synced records, call sessions, and audit events.
 
 The browser never receives provider keys. The UI marks the sample extractor and synthetic sample entries clearly. The demo parser is only a development fallback; it is not Evon. Recorded browser audio is converted to 16 kHz mono WAV before Prisma upload and limited to 60 seconds, matching the documented REST workflow.
 

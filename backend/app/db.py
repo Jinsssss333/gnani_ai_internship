@@ -33,6 +33,33 @@ def initialize() -> None:
                 deleted_at TEXT
             )"""
         )
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS visit_cards (
+                code TEXT PRIMARY KEY,
+                label TEXT NOT NULL
+            )"""
+        )
+        db.executemany(
+            "INSERT OR IGNORE INTO visit_cards (code, label) VALUES (?, ?)",
+            [
+                ("4821", "Synthetic household #21"),
+                ("4822", "Synthetic household #22"),
+                ("7304", "Synthetic household #04"),
+            ],
+        )
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS call_sessions (
+                id TEXT PRIMARY KEY,
+                language_code TEXT NOT NULL,
+                visit_code TEXT NOT NULL,
+                current_question_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                answers_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                finalization_json TEXT
+            )"""
+        )
         columns = {row["name"] for row in db.execute("PRAGMA table_info(visits)").fetchall()}
         if "deleted_at" not in columns:
             db.execute("ALTER TABLE visits ADD COLUMN deleted_at TEXT")
@@ -46,6 +73,68 @@ def initialize() -> None:
                 actor TEXT NOT NULL
             )"""
         )
+
+
+def visit_card(code: str) -> dict | None:
+    with connect() as db:
+        row = db.execute("SELECT code, label FROM visit_cards WHERE code = ?", (code,)).fetchone()
+    return dict(row) if row else None
+
+
+def create_call_session(language_code: str, visit_code: str) -> dict:
+    now = datetime.now(timezone.utc).isoformat()
+    session = {
+        "id": str(uuid4()),
+        "language_code": language_code,
+        "visit_code": visit_code,
+        "current_question_id": "visit_done",
+        "status": "in_progress",
+        "answers": {},
+        "created_at": now,
+        "updated_at": now,
+        "finalization": None,
+    }
+    with connect() as db:
+        db.execute(
+            """INSERT INTO call_sessions
+            (id, language_code, visit_code, current_question_id, status, answers_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                session["id"], session["language_code"], session["visit_code"],
+                session["current_question_id"], session["status"], json.dumps(session["answers"]),
+                now, now,
+            ),
+        )
+    return session
+
+
+def get_call_session(session_id: str) -> dict | None:
+    with connect() as db:
+        row = db.execute("SELECT * FROM call_sessions WHERE id = ?", (session_id,)).fetchone()
+    if not row:
+        return None
+    return {
+        "id": row["id"], "language_code": row["language_code"], "visit_code": row["visit_code"],
+        "current_question_id": row["current_question_id"], "status": row["status"],
+        "answers": json.loads(row["answers_json"]), "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "finalization": json.loads(row["finalization_json"]) if row["finalization_json"] else None,
+    }
+
+
+def update_call_session(session: dict) -> dict:
+    session["updated_at"] = datetime.now(timezone.utc).isoformat()
+    with connect() as db:
+        db.execute(
+            """UPDATE call_sessions SET current_question_id = ?, status = ?, answers_json = ?,
+            updated_at = ?, finalization_json = ? WHERE id = ?""",
+            (
+                session["current_question_id"], session["status"], json.dumps(session["answers"]),
+                session["updated_at"], json.dumps(session["finalization"]) if session.get("finalization") else None,
+                session["id"],
+            ),
+        )
+    return session
 
 
 def save_visit(

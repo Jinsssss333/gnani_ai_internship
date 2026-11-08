@@ -1,6 +1,6 @@
 {
-  "name": "SwarSathi Visit Register",
-  "short_name": "SwarSathi",
+  "name": "SunoCare Guided Visit Register",
+  "short_name": "SunoCare",
   "description": "Voice-first visit notes for community health workers",
   "start_url": "/",
   "display": "standalone",

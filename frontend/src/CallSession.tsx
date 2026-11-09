@@ -1,4 +1,5 @@
 import { useState } from "react";
+import VoiceAnswer from "./VoiceAnswer";
 import { actOnCall, answerCall, finalizeCall, startCall, type CallSession } from "./api";
 
 type Props = { onClose: () => void; onSaved: () => void };
@@ -49,6 +50,7 @@ export default function CallSessionScreen({ onClose, onSaved }: Props) {
   const keypad = session.prompt?.expects.keypad;
   return <main className="call-page"><section className="call-card">
     <button className="call-back" onClick={onClose}>× Exit call</button><p className="section-kicker">GUIDED VISIT · {session.visit_code}</p><div className="call-progress">Question {Object.keys(session.answers).length + 1}</div><h1>{session.prompt?.text}</h1>
+    <VoiceAnswer key={session.state} session={session} onAnswer={setSession} />
     {currentAnswer ? <section className="call-result"><span>Heard</span><strong>{displayValue(currentAnswer.value)}</strong><p>Evidence: “{currentAnswer.evidence_quote}”</p><div className="call-actions"><button disabled={busy} onClick={() => run(async () => setSession(await actOnCall(session.session_id, "confirm")))}>1 · Confirm and next</button><button disabled={busy} onClick={() => run(async () => { setSession(await actOnCall(session.session_id, "correct")); setInput(""); })}>2 · Answer again</button><button disabled={busy} onClick={() => run(async () => setSession(await actOnCall(session.session_id, "repeat")))}>3 · Review again</button>{session.prompt?.expects.optional && <button disabled={busy} onClick={() => run(async () => setSession(await actOnCall(session.session_id, "skip")))}>Skip</button>}</div></section> : <>
       {keypad ? <div className="call-keypad">{Object.entries(keypad).map(([key, value]) => <button key={key} disabled={busy} onClick={() => run(async () => setSession(await answerCall(session.session_id, crypto.randomUUID(), session.prompt!.id, undefined, key)))}><strong>{key}</strong>{String(value).replaceAll("_", " ")}</button>)}</div> : <><label>Your answer<input autoFocus value={input} onChange={(event) => setInput(event.target.value)} placeholder={session.prompt?.expects.type === "integer" ? "Enter age" : "Type the response for this demo"} /></label><button className="button button-primary call-primary" disabled={busy || !input.trim()} onClick={() => run(async () => setSession(await answerCall(session.session_id, crypto.randomUUID(), session.prompt!.id, input)))}>{busy ? "Checking…" : "Continue"}</button></>}
       {session.prompt?.expects.optional && <button className="call-back" disabled={busy} onClick={() => run(async () => setSession(await actOnCall(session.session_id, "skip")))}>9 · Skip optional question</button>}

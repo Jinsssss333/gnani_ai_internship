@@ -38,6 +38,16 @@ export async function getHealth(): Promise<ProviderHealth> {
   return response.json() as Promise<ProviderHealth>;
 }
 
+export async function answerCallAudio(sessionId: string, questionId: string, audio: Blob): Promise<CallSession> {
+  const data = new FormData();
+  data.append("audio_file", audio, "answer.wav");
+  data.append("question_id", questionId);
+  data.append("answer_id", crypto.randomUUID());
+  const response = await fetch(`${API_BASE}/api/calls/${sessionId}/audio`, { method: "POST", body: data, signal: AbortSignal.timeout(100000) });
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json();
+}
+
 export async function startCall(language_code: string, visit_code: string): Promise<CallSession> {
   const response = await fetch(`${API_BASE}/api/calls/start`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ language_code, visit_code }) });
   if (!response.ok) throw new Error(await readError(response));

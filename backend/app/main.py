@@ -165,6 +165,22 @@ async def answer_call(session_id: str, payload: CallAnswerRequest) -> dict:
     return _session_response(session, answer=answer)
 
 
+@app.post("/api/calls/{session_id}/audio")
+async def answer_audio(session_id: str, audio_file: UploadFile = File(...),
+                       answer_id: str = Form(...), question_id: str = Form(...)) -> dict:
+    session = _session_or_404(session_id)
+    if session["current_question_id"] != question_id:
+        raise HTTPException(409, "The current question has changed.")
+    audio = await audio_file.read()
+    if not audio or len(audio) > 2_000_000:
+        raise HTTPException(422, "Provide a short WAV recording.")
+    try:
+        transcript = await prisma.transcribe(audio, "answer.wav", "audio/wav", session["language_code"])
+    except (httpx.HTTPError, RuntimeError) as exc:
+        raise HTTPException(502, "Transcription failed. Retry the recording.") from exc
+    return await answer_call(session_id, CallAnswerRequest(answer_id=answer_id, question_id=question_id, text=transcript))
+
+
 @app.post("/api/calls/{session_id}/action")
 async def call_action(session_id: str, payload: CallActionRequest) -> dict:
     session = _session_or_404(session_id)

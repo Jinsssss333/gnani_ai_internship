@@ -158,6 +158,7 @@ async def answer_call(session_id: str, payload: CallAnswerRequest) -> dict:
         "extraction_source": "intent" if item["type"] in {"boolean", "enum", "integer"} else "worker-text",
         "needs_confirmation": True,
         "confirmed": False,
+        "previous_attempts": ([*existing.get("previous_attempts", []), {key: value for key, value in existing.items() if key != "previous_attempts"}] if existing else []),
     }
     session["answers"][current_id] = answer
     db.update_call_session(session)
@@ -168,17 +169,32 @@ async def answer_call(session_id: str, payload: CallAnswerRequest) -> dict:
 async def call_action(session_id: str, payload: CallActionRequest) -> dict:
     session = _session_or_404(session_id)
     current_id = session["current_question_id"]
+    if current_id == FINAL_REVIEW and payload.action == "correct":
+        editable = {"age", "symptoms", "followup_date", "notes"}
+        if payload.field not in editable or payload.field not in session["answers"]:
+            raise HTTPException(status_code=422, detail="Choose an answered detail to correct.")
+        session["current_question_id"] = payload.field
+        session["status"] = "awaiting_confirmation"
+        answer = session["answers"][payload.field]
+        answer["confirmed"] = False
+        answer["needs_confirmation"] = True
+        answer["awaiting_replacement"] = True
+        db.update_call_session(session)
+        return _session_response(session)
     if current_id in {FINAL_REVIEW, "SAVED"}:
         raise HTTPException(status_code=409, detail="This call is already ready for finalization.")
     if not allowed_action(current_id, payload.action):
         raise HTTPException(status_code=422, detail="That action is not available for this question.")
     answer = session["answers"].get(current_id)
     if payload.action == "confirm":
-        if not answer:
+        if not answer or answer.get("awaiting_replacement"):
             raise HTTPException(status_code=409, detail="Record an answer before confirming it.")
         answer["confirmed"] = True
         answer["needs_confirmation"] = False
         session["current_question_id"] = next_question(current_id, answer["value"])
+        if session["status"] == "awaiting_confirmation":
+            session["current_question_id"] = FINAL_REVIEW
+            session["status"] = "in_progress"
     elif payload.action == "skip":
         session["answers"][current_id] = {
             "answer_id": f"skipped-{current_id}", "question_id": current_id,
@@ -187,9 +203,16 @@ async def call_action(session_id: str, payload: CallActionRequest) -> dict:
             "unresolved": True,
         }
         session["current_question_id"] = next_question(current_id, None)
+        if session["status"] == "awaiting_confirmation":
+            session["current_question_id"] = FINAL_REVIEW
+            session["status"] = "in_progress"
     elif payload.action == "unresolved":
         session["current_question_id"] = next_question(current_id, answer["value"] if answer else None)
-    # correct/repeat intentionally retain the existing answer as an audit-worthy attempt.
+    elif payload.action == "correct" and answer:
+        answer["confirmed"] = False
+        answer["needs_confirmation"] = True
+        answer["awaiting_replacement"] = True
+    # Repeat leaves the interpreted answer available for review.
     db.update_call_session(session)
     return _session_response(session)
 

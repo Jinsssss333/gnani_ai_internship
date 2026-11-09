@@ -1,6 +1,7 @@
 import type { AuditEvent, QueuedVisit, VisitRecord } from "./types";
 
-const DB_NAME = "sunocare-local";
+// Keep the original database name so the rename preserves existing local visits.
+const DB_NAME = "swarsathi-local";
 const QUEUE_STORE = "queued-visits";
 const REGISTER_STORE = "saved-visits";
 const AUDIT_STORE = "audit-events";

@@ -11,6 +11,7 @@ export type GuidedAnswer = {
   confirmed: boolean;
   needs_confirmation: boolean;
   unresolved?: boolean;
+  awaiting_replacement?: boolean;
 };
 
 export type CallSession = {
@@ -49,8 +50,8 @@ export async function answerCall(sessionId: string, answer_id: string, question_
   return response.json() as Promise<CallSession>;
 }
 
-export async function actOnCall(sessionId: string, action: "confirm" | "correct" | "repeat" | "skip"): Promise<CallSession> {
-  const response = await fetch(`${API_BASE}/api/calls/${encodeURIComponent(sessionId)}/action`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
+export async function actOnCall(sessionId: string, action: "confirm" | "correct" | "repeat" | "skip", field?: string): Promise<CallSession> {
+  const response = await fetch(`${API_BASE}/api/calls/${encodeURIComponent(sessionId)}/action`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, field }) });
   if (!response.ok) throw new Error(await readError(response));
   return response.json() as Promise<CallSession>;
 }

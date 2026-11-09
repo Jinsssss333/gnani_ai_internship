@@ -59,3 +59,4 @@ class CallAnswerRequest(BaseModel):
 
 class CallActionRequest(BaseModel):
     action: str = Field(pattern=r"^(confirm|correct|repeat|skip|unresolved)$")
+    field: str | None = None

@@ -30,7 +30,7 @@ SUNOCARE_PHONE_NUMBER=<the actual number supplied by Exotel>
 
 The WSS username/password authenticate **our gateway**; they are not your Exotel dashboard login or API token. The account SID is checked against each stream's start event. Existing Prisma/Timbre endpoint settings still apply. Restart both Python processes after editing `.env`.
 
-From `backend`, run `.\.venv\Scripts\python.exe check_phone.py --live`. It spends provider credits on synthetic data. The configured model is now `gemini-3.8-flash`; recent verification encountered timeouts and HTTP 503. Retry when the service recovers. HTTP 429 instead requires checking quota/model access. No demo data silently replaces a failed live model.
+From `backend`, run `.\.venv\Scripts\python.exe check_phone.py --live`. It spends provider credits on synthetic data. The configured model is `gemini-3.5-flash-lite`; synthetic age correction, symptom negation and the Hindi speech-to-extraction check passed with the existing key. Missing Exotel configuration still makes preflight exit with code 1 even when provider checks pass. No demo data silently replaces a failed live model.
 
 ## 3. Run the phone gateway and tunnel
 

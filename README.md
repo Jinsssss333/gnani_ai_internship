@@ -72,7 +72,7 @@ Latest verified state (10 November 2026):
 - 15 offline backend tests pass, including a mocked Exotel socket, correction, finalization and gateway access checks.
 - Frontend production build and service-worker syntax check pass.
 - Live Hindi Timbre → Prisma round-trip and English Timbre generation pass.
-- Gemini now uses `gemini-3.8-flash` with the existing key. Live verification encountered timeouts and HTTP 503; successful extraction remains unverified. The earlier Argon configuration returned HTTP 429.
+- Gemini uses `gemini-3.5-flash-lite` with the existing key. Live synthetic age correction, symptom negation and Hindi Timbre → Prisma → Gemini age extraction passed. These smoke tests do not establish general extraction accuracy.
 - No Exotel account/number is configured; a real inbound call remains unverified.
 
 ## Project map

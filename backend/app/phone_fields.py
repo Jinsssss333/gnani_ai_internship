@@ -47,7 +47,7 @@ async def extract_field(field: str, transcript: str, language: str, today: date)
         "Use exactly one date representation. Ambiguous 'next Friday' or 'kal' without context is unclear. "
         "All unused values must be null, empty string or empty arrays."
     )
-    model = quote(os.getenv("GEMINI_MODEL", "gemini-3.8-flash"), safe="-._")
+    model = quote(os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite"), safe="-._")
     generation_config = {"responseMimeType": "application/json", "responseJsonSchema": schema}
     if model == "gemini-3.8-flash":
         generation_config["thinkingConfig"] = {"thinkingLevel": "low"}

@@ -21,6 +21,7 @@ PROMPTS = {
         "failed": "The service could not process this answer. Your earlier answers are saved. Please retry.",
         "unavailable": "We could not complete the form. Your partial visit is saved for review. Please hang up and try later.",
         "yes": "Yes", "no": "No", "none": "Skipped", "heard": "Recorded",
+        "reported": "Symptoms present", "negated": "Symptoms absent",
     },
     "hi-IN": {
         "form": "काल्पनिक घर भ्रमण फॉर्म के लिए 1 दबाएं।",
@@ -43,6 +44,7 @@ PROMPTS = {
         "failed": "अभी जवाब प्रोसेस नहीं हुआ। पिछले जवाब सेव हैं। कृपया फिर कोशिश करें।",
         "unavailable": "फॉर्म पूरा नहीं हुआ। अधूरी मुलाकात सेव है। कृपया कॉल बंद करके बाद में कोशिश करें।",
         "yes": "हाँ", "no": "नहीं", "none": "छोड़ा गया", "heard": "दर्ज किया गया",
+        "reported": "मौजूद लक्षण", "negated": "जो लक्षण नहीं हैं",
     },
 }
 LANGUAGE_MENU = [("hi-IN", "सुनोकेयर में स्वागत है। हिंदी के लिए 2 दबाएं।"),

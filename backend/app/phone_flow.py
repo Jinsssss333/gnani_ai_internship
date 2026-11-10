@@ -59,8 +59,12 @@ class PhoneConversation:
         if isinstance(value, dict):
             if "date" in value:
                 return f"{value['phrase']}. {value['date']}"
-            # Include explicit negations in their original transcript language.
-            return answer["transcript"]
+            # Confirm the actual structured fields that will be saved, not background chatter.
+            parts = []
+            for key in ("reported", "negated"):
+                if value.get(key):
+                    parts.append(f"{self.messages[key]}: {', '.join(value[key])}")
+            return ". ".join(parts)
         return str(value).replace("_", " ")
 
     async def ask(self):

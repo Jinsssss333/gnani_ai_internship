@@ -5,9 +5,26 @@ from datetime import date, timedelta
 from urllib.parse import quote
 
 import httpx
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class FieldExtraction(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    text: str
+    age: int | None = Field(ge=0, le=120)
+    reported: list[str]
+    negated: list[str]
+    weekday: int | None = Field(ge=0, le=6)
+    days_ahead: int | None = Field(ge=0, le=366)
+    iso_date: str | None
+    evidence: str
+    clear: bool
 
 
 async def extract_field(field: str, transcript: str, language: str, today: date) -> tuple[object, str]:
+    if field not in {"patient_name", "age", "symptoms", "followup_date", "notes"}:
+        raise ValueError("Unsupported speech field.")
     key = os.getenv("GEMINI_API_KEY", "").strip()
     if not key:
         raise ValueError("Gemini is required for open-ended phone answers.")
@@ -40,18 +57,25 @@ async def extract_field(field: str, transcript: str, language: str, today: date)
                   "generationConfig": {"temperature": 0, "responseMimeType": "application/json", "responseJsonSchema": schema}},
         )
         response.raise_for_status()
-        data = json.loads("".join(p.get("text", "") for p in response.json()["candidates"][0]["content"]["parts"]))
-    if not data["clear"] or not data["evidence"] or data["evidence"] not in transcript:
+        try:
+            content = "".join(p.get("text", "") for p in response.json()["candidates"][0]["content"]["parts"])
+            data = FieldExtraction.model_validate(json.loads(content)).model_dump()
+        except (KeyError, IndexError, TypeError, AttributeError, ValueError) as exc:
+            raise ValueError("The extraction service returned an invalid answer.") from exc
+    if not data["clear"] or not data["evidence"].strip() or data["evidence"] not in transcript:
         raise ValueError("The answer was unclear; please repeat it.")
     if field == "age":
         value = data["age"]
         if type(value) is not int or not 0 <= value <= 120:
             raise ValueError("Age must be between zero and 120.")
     elif field == "symptoms":
+        symptoms = data["reported"] + data["negated"]
+        if not symptoms or any(not symptom.strip() for symptom in symptoms):
+            raise ValueError("No clear symptom information was returned.")
         value = {"reported": data["reported"], "negated": data["negated"]}
     elif field == "followup_date":
         candidates = [data[k] is not None for k in ("weekday", "days_ahead", "iso_date")]
-        if sum(candidates) != 1:
+        if sum(candidates) != 1 or not data["text"].strip():
             raise ValueError("Please give a clear follow-up date.")
         if data["weekday"] is not None:
             weekday = data["weekday"]

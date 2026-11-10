@@ -47,14 +47,17 @@ async def extract_field(field: str, transcript: str, language: str, today: date)
         "Use exactly one date representation. Ambiguous 'next Friday' or 'kal' without context is unclear. "
         "All unused values must be null, empty string or empty arrays."
     )
-    model = quote(os.getenv("GEMINI_MODEL", "gemini-flash-latest"), safe="-._")
+    model = quote(os.getenv("GEMINI_MODEL", "gemini-3.8-flash"), safe="-._")
+    generation_config = {"responseMimeType": "application/json", "responseJsonSchema": schema}
+    if model == "gemini-3.8-flash":
+        generation_config["thinkingConfig"] = {"thinkingLevel": "low"}
     async with httpx.AsyncClient(timeout=20) as client:
         response = await client.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
             headers={"x-goog-api-key": key},
             json={"systemInstruction": {"parts": [{"text": instruction}]},
                   "contents": [{"parts": [{"text": transcript}]}],
-                  "generationConfig": {"temperature": 0, "responseMimeType": "application/json", "responseJsonSchema": schema}},
+                  "generationConfig": generation_config},
         )
         response.raise_for_status()
         try:

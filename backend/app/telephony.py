@@ -130,6 +130,10 @@ async def exotel(websocket: WebSocket):
             if not isinstance(event, dict):
                 raise ValueError("Invalid event")
             kind = event.get("event")
+            if kind != "media":
+                # Event names alone help diagnose provider handshakes without
+                # recording caller identifiers, audio, transcripts, or payloads.
+                log.warning("Exotel event received: %s", str(kind)[:24])
             if kind == "start":
                 if engine is not None:
                     raise ValueError("Duplicate start")
@@ -137,11 +141,21 @@ async def exotel(websocket: WebSocket):
                 account_matches = hmac.compare_digest(str(start.get("account_sid", "")), account)
                 media = start["media_format"]
                 rate = int(media["sample_rate"])
-                format_ok = rate in {8000, 16000, 24000} and str(media.get("bit_rate")) == "16" and media.get("encoding") == "audio/x-raw"
+                encoding = str(media.get("encoding", ""))[:40]
+                bit_rate = str(media.get("bit_rate", ""))[:20]
+                # Exotel's Voicebot applet uses two metadata shapes for the same
+                # base64-transported PCM16 stream: audio/x-raw + bit depth "16",
+                # or encoding "base64" + a bitrate such as "128kbps".
+                format_ok = rate in {8000, 16000, 24000} and (
+                    (encoding == "audio/x-raw" and bit_rate == "16")
+                    or (encoding == "base64" and bit_rate in {"128kbps", "256kbps", "384kbps"})
+                )
                 # Log only field presence and protocol validity; never call IDs, numbers,
                 # credentials, audio, transcripts, or complete event payloads.
-                log.info("Exotel stream start: account_matches=%s media_format_ok=%s call_sid_present=%s stream_sid_present=%s",
-                         account_matches, format_ok, bool(start.get("call_sid")), bool(start.get("stream_sid")))
+                # Keep this at WARNING so the protocol details are visible in the
+                # gateway's default console log level during trial troubleshooting.
+                log.warning("Exotel stream start: account_matches=%s media_format_ok=%s sample_rate=%s bit_rate=%s encoding=%s",
+                         account_matches, format_ok, rate, bit_rate, encoding)
                 if not account_matches:
                     raise ValueError("Wrong account")
                 if not format_ok:

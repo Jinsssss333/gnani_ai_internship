@@ -111,7 +111,8 @@ class PhoneTests(unittest.TestCase):
         output = io.BytesIO()
         with wave.open(output, "wb") as wav:
             wav.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
-            wav.writeframes(b"\0\0" * 1600)
+            # A short final frame still needs padding to Exotel's minimum size.
+            wav.writeframes(b"\0\0" * 1761)
         # Speech is mocked; the cache is isolated in the temporary test directory.
         with patch.dict(os.environ, {"TELEPHONY_USER": "demo", "TELEPHONY_PASSWORD": "test-only", "EXOTEL_ACCOUNT_SID": "test-account"}), patch(
             "app.telephony.timbre.synthesize", AsyncMock(return_value=(output.getvalue(), "audio/wav"))):
@@ -124,7 +125,9 @@ class PhoneTests(unittest.TestCase):
                         while True:
                             message = ws.receive_json()
                             if message["event"] == "media":
-                                self.assertTrue(base64.b64decode(message["media"]["payload"]))
+                                frame = base64.b64decode(message["media"]["payload"])
+                                self.assertGreaterEqual(len(frame), 3200)
+                                self.assertEqual(len(frame) % 320, 0)
                                 heard = True
                             if message["event"] == "mark":
                                 ws.send_json(message)

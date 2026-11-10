@@ -75,7 +75,6 @@ async def exotel(websocket: WebSocket):
     pending_mark = ""
     stream_id = ""
     rate = 16000
-    busy = False
     engine = None
     worker = None
     last_sequence = -1
@@ -102,25 +101,21 @@ async def exotel(websocket: WebSocket):
         pending_mark = uuid4().hex
         for start in range(0, len(pcm), 3200):
             chunk = pcm[start:start + 3200]
-            chunk += b"\0" * (-len(chunk) % 320)
+            # Exotel requires every frame, including the tail, to be at least 3200 bytes.
+            chunk += b"\0" * (3200 - len(chunk))
             await websocket.send_json({"event": "media", "stream_sid": stream_id,
                                        "media": {"payload": base64.b64encode(chunk).decode()}})
         await websocket.send_json({"event": "mark", "stream_sid": stream_id, "mark": {"name": pending_mark}})
         await asyncio.wait_for(playback.wait(), len(pcm) / (rate * 2) + 15)
 
     async def consume():
-        nonlocal busy
         try:
-            busy = True
             await engine.welcome()
-            busy = False
             while not engine.done:
                 stage, field, digit = await queue.get()
                 if stage != engine.stage or field != (engine.session or {}).get("state"):
                     continue
-                busy = True
                 await engine.digit(digit)
-                busy = False
             await websocket.close(code=1000)
         except asyncio.CancelledError:
             raise
@@ -174,7 +169,7 @@ async def exotel(websocket: WebSocket):
                 break
     except (WebSocketDisconnect, TimeoutError):
         pass
-    except (ValueError, KeyError, TypeError, binascii.Error):
+    except (ValueError, KeyError, TypeError, AttributeError, binascii.Error):
         await websocket.close(code=1008)
     finally:
         if worker:

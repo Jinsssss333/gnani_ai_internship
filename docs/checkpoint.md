@@ -1,6 +1,8 @@
 # SunoCare — project checkpoint and agent handoff
 
-Last updated: **10 November 2026, Asia/Calcutta**.
+Last updated: **11 November 2026, Asia/Calcutta**.
+
+> Latest state overrides historical observations below: see section 15 for the diagnosed Exotel attachment error and the requested separate MyOperator experiment. Earlier statements that the save error is undiagnosed are historical.
 
 ## How to use and maintain this document
 
@@ -315,3 +317,16 @@ Verified recent Git history:
 5. Implement minimal neo-brutalist supervisor UI if still desired before filming; do not let cosmetic work substitute for real-call verification.
 6. Record the requested three-minute actual demo once end-to-end calling works.
 7. Update this checkpoint with every requested checkpoint refresh, explicitly marking newly resolved blockers and retaining remaining limits. Push only when asked.
+
+## 15. 11 November update — baseline and provider experiment
+
+- Services were restarted on ports 5173 (frontend), 8003 (main API) and 8002 (gateway). ngrok initially lacked its saved auth configuration; the user reconfigured it and the tunnel was restarted. Public `/health` returned 200 with the expected body. Runtime availability must still be checked anew.
+- Exotel's `map_vn_with_flow` request returned HTTP 200 with application body `{"error":true,"message":"Invalid Exophone/Phonenumber"}`. The UI remained at 0% instead of showing the error. This is number-to-flow attachment rejection, not evidence of a model or tunnel failure.
+- Chrome also paused on an exception in Facebook tracking code (`fbevents.js`, parsing `get started` as a URL). Disabling exception pauses did not fix the attachment rejection.
+- Suggested workaround: back up and edit the existing demo Landing Flow already attached to the trial number, rather than remapping the number. Completion and a full real call are not established in this chat.
+- The user wants free trial access and has not authorized purchases. They now explicitly requested preserving `dev` and trying MyOperator on a separate feature branch.
+- Repository inspection found existing commit `c60f313` (safe Exotel diagnostics) plus an uncommitted compatibility change accepting alternate base64/bitrate metadata. That change was preserved in a separate dev commit. It is existing workspace work, not proof that a real call succeeded.
+- Fetched `origin --prune`: local dev contained the fetched origin/dev history and was one commit ahead before saving the remaining changes. No conflict or missing remote commit was found.
+- Validation of the preserved baseline: 15 backend tests passed when run from `backend`. An initial invocation from repository root failed import collection (`app` not found); correcting cwd resolved it without code changes.
+- Branch plan: create `codex/myoperator-provider` from the fully committed dev baseline. Shared prior changes are inherited through Git ancestry, not duplicated/cherry-picked. All new provider work belongs on that feature branch. Local ignored `.env`, audio, SQLite and dependency folders remain local and are not committed/copied into Git.
+- User has no MyOperator account yet; they have seen a trial option. Trial availability does not confirm custom streaming or API access. Investigate before claiming compatibility or replacing the working Gnani/Gemini pipeline.

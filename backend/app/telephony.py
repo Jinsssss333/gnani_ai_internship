@@ -134,11 +134,17 @@ async def exotel(websocket: WebSocket):
                 if engine is not None:
                     raise ValueError("Duplicate start")
                 start = event["start"]
-                if not hmac.compare_digest(str(start.get("account_sid", "")), account):
-                    raise ValueError("Wrong account")
+                account_matches = hmac.compare_digest(str(start.get("account_sid", "")), account)
                 media = start["media_format"]
                 rate = int(media["sample_rate"])
-                if rate not in {8000, 16000, 24000} or str(media.get("bit_rate")) != "16" or media.get("encoding") != "audio/x-raw":
+                format_ok = rate in {8000, 16000, 24000} and str(media.get("bit_rate")) == "16" and media.get("encoding") == "audio/x-raw"
+                # Log only field presence and protocol validity; never call IDs, numbers,
+                # credentials, audio, transcripts, or complete event payloads.
+                log.info("Exotel stream start: account_matches=%s media_format_ok=%s call_sid_present=%s stream_sid_present=%s",
+                         account_matches, format_ok, bool(start.get("call_sid")), bool(start.get("stream_sid")))
+                if not account_matches:
+                    raise ValueError("Wrong account")
+                if not format_ok:
                     raise ValueError("Unsupported PCM format")
                 stream_id = str(start["stream_sid"])
                 candidate = str(start["call_sid"])
@@ -169,7 +175,10 @@ async def exotel(websocket: WebSocket):
                 break
     except (WebSocketDisconnect, TimeoutError):
         pass
-    except (ValueError, KeyError, TypeError, AttributeError, binascii.Error):
+    except (ValueError, KeyError, TypeError, AttributeError, binascii.Error) as exc:
+        # Exception messages here are fixed protocol-validation errors; avoid logging
+        # provider payloads or any caller data.
+        log.warning("Exotel WebSocket rejected event: %s", str(exc)[:80])
         await websocket.close(code=1008)
     finally:
         if worker:

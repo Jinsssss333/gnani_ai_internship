@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/callsession.tsx","./src/api.ts","./src/main.tsx","./src/storage.ts","./src/types.ts","./src/vite-env.d.ts"],"version":"5.8.3"}
+{"root":["./src/app.tsx","./src/callsession.tsx","./src/supervisor.tsx","./src/voiceanswer.tsx","./src/api.ts","./src/audio.ts","./src/main.tsx","./src/storage.ts","./src/types.ts","./src/vite-env.d.ts"],"version":"5.8.3"}

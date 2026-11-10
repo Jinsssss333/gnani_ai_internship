@@ -12,6 +12,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from app import db
 from app.main import app
+from app.phone_gateway import app as gateway
 from app.phone_flow import PhoneConversation
 from app.telephony import authorized, wav_to_pcm
 
@@ -107,6 +108,13 @@ class PhoneTests(unittest.TestCase):
                     with client.websocket_connect("/api/telephony/exotel"):
                         pass
 
+    def test_public_gateway_excludes_supervisor_and_write_apis(self):
+        with TestClient(gateway) as client:
+            self.assertEqual(client.get("/health").status_code, 200)
+            for path in ("/api/visits", "/api/audit", "/api/telephony/calls", "/docs", "/openapi.json"):
+                self.assertEqual(client.get(path).status_code, 404)
+            self.assertEqual(client.post("/api/visits", json={}).status_code, 404)
+
     def test_exotel_handshake_audio_and_keypad(self):
         output = io.BytesIO()
         with wave.open(output, "wb") as wav:
@@ -117,7 +125,7 @@ class PhoneTests(unittest.TestCase):
         with patch.dict(os.environ, {"TELEPHONY_USER": "demo", "TELEPHONY_PASSWORD": "test-only", "EXOTEL_ACCOUNT_SID": "test-account"}), patch(
             "app.telephony.timbre.synthesize", AsyncMock(return_value=(output.getvalue(), "audio/wav"))):
             headers = {"Authorization": "Basic " + base64.b64encode(b"demo:test-only").decode()}
-            with TestClient(app) as client:
+            with TestClient(gateway) as client:
                 with client.websocket_connect("/api/telephony/exotel", headers=headers) as ws:
                     ws.send_json({"event": "start", "start": {"account_sid": "test-account", "call_sid": "call-test", "stream_sid": "stream-1", "media_format": {"encoding": "audio/x-raw", "sample_rate": "16000", "bit_rate": "16"}}})
                     def listen():

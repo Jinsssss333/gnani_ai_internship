@@ -7,7 +7,13 @@
       "type": "boolean",
       "prompt": "Did you complete the home visit today?",
       "keypad": { "1": true, "2": false },
-      "next": { "true": "age", "false": "not_done_reason" }
+      "next": { "true": "patient_name", "false": "not_done_reason" }
+    },
+    {
+      "id": "patient_name",
+      "type": "free_text",
+      "prompt": "What is the patient's name? Use a fictional name for this demonstration.",
+      "next": "age"
     },
     {
       "id": "not_done_reason",

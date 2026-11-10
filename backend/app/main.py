@@ -17,6 +17,7 @@ from app import db
 from app.call_flow import FINAL_REVIEW, allowed_action, next_question
 from app.questions import prompt, question
 from app.providers import evon, prisma, timbre
+from app.telephony import router as telephony_router
 from app.schemas import (
     AuditEvent,
     CallActionRequest,
@@ -34,6 +35,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="SunoCare API", version="0.2.0", lifespan=lifespan)
+app.include_router(telephony_router)
 origins = [
     origin.strip()
     for origin in os.getenv(
@@ -186,7 +188,7 @@ async def call_action(session_id: str, payload: CallActionRequest) -> dict:
     session = _session_or_404(session_id)
     current_id = session["current_question_id"]
     if current_id == FINAL_REVIEW and payload.action == "correct":
-        editable = {"age", "symptoms", "followup_date", "notes"}
+        editable = {"patient_name", "age", "symptoms", "followup_date", "notes"}
         if payload.field not in editable or payload.field not in session["answers"]:
             raise HTTPException(status_code=422, detail="Choose an answered detail to correct.")
         session["current_question_id"] = payload.field
@@ -235,51 +237,10 @@ async def call_action(session_id: str, payload: CallActionRequest) -> dict:
 
 @app.post("/api/calls/{session_id}/finalize")
 async def finalize_call(session_id: str) -> dict:
-    session = _session_or_404(session_id)
-    if session.get("finalization"):
-        return session["finalization"]
-    if session["current_question_id"] != FINAL_REVIEW:
-        raise HTTPException(status_code=409, detail="Confirm the guided answers before finalizing.")
-    outstanding = [
-        answer["question_id"] for answer in session["answers"].values()
-        if not answer.get("confirmed") and not answer.get("unresolved")
-    ]
-    if outstanding:
-        raise HTTPException(status_code=409, detail=f"These answers still need review: {', '.join(outstanding)}")
-    answers = session["answers"]
-    symptoms = answers.get("symptoms", {}).get("value") or {}
-    visit = {
-        "patient_name": None,
-        "age": answers.get("age", {}).get("value"),
-        "vitals": {"blood_pressure": None, "temperature_f": None},
-        "symptoms": [symptoms["reported"]] if symptoms.get("reported") else [],
-        "follow_up_date": None,
-        "follow_up_phrase": answers.get("followup_date", {}).get("value"),
-        "notes": answers.get("notes", {}).get("value"),
-        "visit_status": "completed" if answers.get("visit_done", {}).get("value") else "not_completed",
-        "review_status": "confirmed",
-        "sync_status": "synced",
-    }
-    saved = db.save_visit(
-        transcript="Guided SunoCare visit",
-        language=session["language_code"],
-        extraction_source="guided-worker-confirmed",
-        visit=visit,
-        visit_id=session["id"],
-        created_at=session["created_at"],
-    )
-    audit = db.record_audit_event({
-        "id": str(uuid4()), "visit_id": saved["id"],
-        "occurred_at": datetime.now(timezone.utc).isoformat(), "action": "created",
-        "summary": f"Guided visit {session['visit_code']} confirmed by worker.",
-        "actor": "Demo ASHA worker",
-    })
-    result = {"visit": saved, "audit": audit}
-    session["status"] = "completed"
-    session["current_question_id"] = "SAVED"
-    session["finalization"] = result
-    db.update_call_session(session)
-    return result
+    try:
+        return db.finalize_call(session_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.post("/api/visits/process")

@@ -2,7 +2,7 @@ from app.call_flow import FINAL_REVIEW, allowed_action, next_question
 
 
 def test_visit_done_branches_to_age_or_reason() -> None:
-    assert next_question("visit_done", True) == "age"
+    assert next_question("visit_done", True) == "patient_name"
     assert next_question("visit_done", False) == "not_done_reason"
 
 

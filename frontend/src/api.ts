@@ -2,6 +2,18 @@ import type { AuditEvent, ProviderHealth, QueuedVisit, VisitRecord } from "./typ
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 
+export async function getTelephonyStatus(): Promise<{ provider: string; transport_configured: boolean; phone_number: string; live_call_verified: boolean }> {
+  const response = await fetch(`${API_BASE}/api/telephony/status`, { signal: AbortSignal.timeout(10000) });
+  if (!response.ok) throw new Error("Could not load phone service status.");
+  return response.json();
+}
+
+export async function getPhoneCalls(): Promise<{ call_sid: string; session_id: string | null; status: string; started_at: string }[]> {
+  const response = await fetch(`${API_BASE}/api/telephony/calls`, { signal: AbortSignal.timeout(10000) });
+  if (!response.ok) throw new Error("Could not load call log.");
+  return response.json();
+}
+
 export type GuidedAnswer = {
   answer_id: string;
   question_id: string;

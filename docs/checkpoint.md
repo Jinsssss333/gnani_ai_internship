@@ -327,3 +327,30 @@ Verified recent Git history:
 - Repository inspection found existing commit `c60f313` (safe Exotel diagnostics) plus an uncommitted compatibility change accepting alternate base64/bitrate metadata. That change was preserved in a separate dev commit. It is existing workspace work, not proof that a real call succeeded.
 - Fetched `origin --prune`: local dev contained the fetched origin/dev history and was one commit ahead before saving the remaining changes. No conflict or missing remote commit was found.
 - Validation of the preserved baseline: 15 backend tests passed when run from `backend`. An initial invocation from repository root failed import collection (`app` not found); correcting cwd resolved it without code changes.
+
+
+## 16. 11 November — recoverable call records and review rework
+
+### New evidence
+The user reports a real Exotel call reached the form but failed around the follow-up date. The running supervisor now visibly shows that actual call session under Needs review, with earlier answers retained and followup_date unresolved. This confirms recoverability, not a successful complete live submission. The exact failed STT versus extraction step was not established.
+
+### Implementation
+- Current checkout is dev. Exotel remains the runtime provider; no provider switch or credential changes were made.
+- Phone review now reads one field at a time: 1 next, 2 edit a supported field, 3 repeat, 9 finish reviewing. Instructions are spoken on entry, invalid input, or inactivity rather than for every field. Boolean/outcome fields remain immutable from review; the bot explains this.
+- Finish menu: 1 submit, 2 review again, 9 draft. Submission retains atomic validation/idempotency. A missing required answer results in a clearly announced draft, never a false successful submission.
+- Ten-second inactivity reminders in keypad/review stages; after two reminders, the third timeout saves a draft and ends. Recording waits up to 30 seconds (25-second audio cap), so review timeout does not truncate a normal voice answer.
+- Exotel DTMF sends clear and releases pending playback. Revision-tagged queue entries reject stale presses except multi-digit code/date entry. Provider integration tests interrupt an unacknowledged playback mark.
+- Age/date offer key 4 for keypad fallback. Date is DDMMYYYY, automatically processed at eight digits; age uses digits then #. Star clears. Dates reject invalid/past values, use IST, read back day/month/year, store ISO. Full spoken dates accept either day-first or month-first order via Gemini; not yet revalidated with a real call.
+- At the spoken date question, 9 leaves the date unresolved and continues; missing dates still prevent final submission. At answer stage, 0 saves a draft.
+- Existing optional symptoms and notes remain optional for backward compatibility; no new clinical fields or specialised forms were introduced.
+- New local-only recovery router: GET /api/register/sessions lists unfinished sessions, live status, answers, and next missing field. POST /api/register/sessions/{id}/answer lets supervisor confirm the next missing field with validation, prior-answer history, and an audit event. Active calls and completed sessions cannot be repaired here. Supervisor correction is sequential missing-field recovery, not an unrestricted editor.
+- Draft completion uses existing POST /api/calls/{id}/finalize. Submitted sessions disappear from pending and appear once in visits. Visit failure reason now persists in the final record.
+- The public phone gateway still does not mount supervisor/recovery routes.
+- Dashboard rebuilt as a minimal responsive sidebar with Register, Calls, Audit. Filters: All, In progress, Needs review, Submitted. It polls every three seconds with bounded requests and no overlapping refresh; audit/phone-log failures do not prevent register updates. Selected drafts expose missing-field entry and final submit; submitted evidence remains readable. Existing records are preserved.
+
+### Validation and runtime
+- Backend tests run from backend with .venv/Scripts/python.exe -m pytest tests -q. Initial root invocation failed imports; sandbox async runner hung; the correctly scoped unsandboxed run passed. The hung test processes were stopped after identification.
+- Regression coverage includes date entry/invalid dates, per-field review/repeat/reminder, draft persistence, active-call editing rejection, and draft repair -> idempotent submission -> refreshed register data.
+- Frontend TypeScript/Vite production build passed. Browser inspection verified the redesigned page, existing submitted records, recovered real-call draft, and date repair control. No real patient data or new sample records were added to the working database.
+- Started local API 8003, gateway 8002, Vite 5173 as hidden processes. Frontend .env.local already targets 8003. Gateway uses the existing provider credentials. Tunnel availability and a fresh real call still require validation before a demo.
+- No remote push. Changes are saved in focused local commits.

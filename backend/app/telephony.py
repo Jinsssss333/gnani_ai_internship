@@ -73,6 +73,7 @@ async def exotel(websocket: WebSocket):
     queue = asyncio.Queue(maxsize=8)
     playback = asyncio.Event()
     pending_mark = ""
+    interrupted = False
     stream_id = ""
     rate = 16000
     engine = None
@@ -82,7 +83,8 @@ async def exotel(websocket: WebSocket):
     cache = Path(os.getenv("TTS_CACHE_PATH", str(Path(__file__).resolve().parents[1] / "cache" / "tts")))
 
     async def speak(text, language):
-        nonlocal pending_mark
+        nonlocal pending_mark, interrupted
+        interrupted = False
         digest = hashlib.sha256((language + os.getenv("TIMBRE_VOICE", "Nalini") + os.getenv("TIMBRE_MODEL", "timbre-v2.5") + text).encode()).hexdigest()
         cache.mkdir(parents=True, exist_ok=True)
         path = cache / f"{digest}.wav"
@@ -95,6 +97,8 @@ async def exotel(websocket: WebSocket):
             temp = cache / f"{digest}.{uuid4().hex}.tmp"
             temp.write_bytes(audio)
             temp.replace(path)
+        if interrupted:
+            return
         pcm = wav_to_pcm(audio, rate)
         await websocket.send_json({"event": "clear", "stream_sid": stream_id})
         playback.clear()
@@ -112,8 +116,16 @@ async def exotel(websocket: WebSocket):
         try:
             await engine.welcome()
             while not engine.done:
-                stage, field, digit = await queue.get()
-                if stage != engine.stage or field != (engine.session or {}).get("state"):
+                try:
+                    revision, stage, field, digit = await asyncio.wait_for(queue.get(), 30 if engine.listening else 10)
+                except TimeoutError:
+                    if engine.listening and engine.audio:
+                        await engine.finish_audio()
+                    else:
+                        await engine.idle()
+                    continue
+                numeric = stage in {'CODE', 'DATE_KEYPAD'}
+                if (not numeric and revision != engine.revision) or stage != engine.stage or field != (engine.session or {}).get('state'):
                     continue
                 await engine.digit(digit)
             await websocket.close(code=1000)
@@ -176,7 +188,7 @@ async def exotel(websocket: WebSocket):
                 if engine.add_audio(base64.b64decode(encoded, validate=True)):
                     engine.listening = False
                     if not queue.full():
-                        queue.put_nowait((engine.stage, (engine.session or {}).get("state"), "1"))
+                        queue.put_nowait((engine.revision, engine.stage, (engine.session or {}).get("state"), "1"))
             elif kind == "dtmf" and engine and engine.stage != "PROCESSING":
                 sequence = int(event.get("sequence_number", -1))
                 if sequence <= last_sequence:
@@ -184,7 +196,11 @@ async def exotel(websocket: WebSocket):
                 last_sequence = sequence
                 digit = str(event.get("dtmf", {}).get("digit", ""))
                 if digit in "0123456789*#" and len(digit) == 1 and not queue.full():
-                    queue.put_nowait((engine.stage, (engine.session or {}).get("state"), digit))
+                    # Release speech playback immediately; the worker then handles the key.
+                    interrupted = True
+                    await websocket.send_json({'event': 'clear', 'stream_sid': stream_id})
+                    playback.set()
+                    queue.put_nowait((engine.revision, engine.stage, (engine.session or {}).get("state"), digit))
             elif kind == "stop":
                 break
     except (WebSocketDisconnect, TimeoutError):

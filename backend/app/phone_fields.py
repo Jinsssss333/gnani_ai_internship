@@ -44,6 +44,7 @@ async def extract_field(field: str, transcript: str, language: str, today: date)
         "For symptoms return reported and negated arrays with qualifiers in the original language. "
         "For followup_date preserve original phrase as text: weekday 0=Monday to 6=Sunday for bare weekday; "
         "days_ahead only for explicit relative day offsets such as tomorrow=1; iso_date only for explicit full dates. "
+        "Accept full dates spoken in either month-day-year or day-month-year order. Missing year needs clarification. "
         "Use exactly one date representation. Ambiguous 'next Friday' or 'kal' without context is unclear. "
         "All unused values must be null, empty string or empty arrays."
     )

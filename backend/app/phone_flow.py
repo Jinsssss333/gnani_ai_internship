@@ -30,6 +30,49 @@ class PhoneConversation:
         self.done = False
         self.editable = []
         self.failures = 0
+        self.review_index = 0
+        self.review_fields = []
+        self.review_edit = False
+        self.date_digits = ''
+        self.idle_count = 0
+        self.revision = 0
+
+    async def save_draft(self):
+        if self.session:
+            session = db.get_call_session(self.session['session_id'])
+            session['status'] = 'draft'
+            db.update_call_session(session)
+        self.done = True
+        await self.say(self.messages['unavailable'])
+
+    async def review_field(self):
+        if self.review_index >= len(self.review_fields):
+            self.stage = 'SUBMIT'
+            await self.say(self.messages['submit_menu'])
+            return
+        self.stage = 'FIELD_REVIEW'
+        field = self.review_fields[self.review_index]
+        await self.say(self.messages.get('label_' + field, field.replace('_', ' ')) + ': ' + self.value_text(self.session['answers'][field]))
+
+    async def idle(self):
+        self.idle_count += 1
+        if self.idle_count >= 3:
+            await self.save_draft()
+        elif self.stage == 'FIELD_REVIEW':
+            await self.say(self.messages['review_keys'])
+        elif self.stage == 'SUBMIT':
+            await self.say(self.messages['submit_menu'])
+        elif self.stage == 'DATE_KEYPAD':
+            await self.say(self.messages['date_keypad'])
+        elif self.stage == 'CONFIRM':
+            await self.say(self.messages['confirm'])
+        elif self.stage == 'ANSWER':
+            await self.say(self.messages['record'])
+            self.listening = question(self.session['state'])['type'] not in {'boolean', 'enum'}
+        elif self.stage == 'REVIEW':
+            await self.say(self.messages['review'])
+        else:
+            await self.say(self.messages.get(self.stage.lower(), self.messages['invalid']))
 
     @property
     def messages(self):
@@ -58,7 +101,10 @@ class PhoneConversation:
             return self.messages["yes" if value else "no"]
         if isinstance(value, dict):
             if "date" in value:
-                return f"{value['phrase']}. {value['date']}"
+                date = datetime.fromisoformat(value['date'])
+                months = ['जनवरी', 'फ़रवरी', 'मार्च', 'अप्रैल', 'मई', 'जून', 'जुलाई', 'अगस्त', 'सितंबर', 'अक्टूबर', 'नवंबर', 'दिसंबर']
+                month = months[date.month - 1] if self.language == 'hi-IN' else date.strftime('%B')
+                return f'{date.day} {month} {date.year}'
             # Confirm the actual structured fields that will be saved, not background chatter.
             parts = []
             for key in ("reported", "negated"):
@@ -70,6 +116,11 @@ class PhoneConversation:
     async def ask(self):
         state = self.session["state"]
         self.audio.clear()
+        if state == "FINAL_REVIEW" and self.review_edit:
+            self.review_edit = False
+            self.review_index += 1
+            await self.review_field()
+            return
         if state == "FINAL_REVIEW":
             self.stage = "REVIEW"
             await self.say(self.messages["review"])
@@ -79,6 +130,8 @@ class PhoneConversation:
         text = self.messages[state]
         if item["type"] not in {"boolean", "enum"}:
             text += " " + self.messages["record"]
+        if state in {'followup_date', 'age'}:
+            text += ' ' + self.messages['keypad_option']
         if item.get("optional"):
             text += " " + self.messages["optional"]
         await self.say(text)
@@ -133,9 +186,12 @@ class PhoneConversation:
         except (ValueError, RuntimeError, TimeoutError, KeyError, IndexError, httpx.HTTPError):
             self.failures += 1
             await self.say(self.messages["failed"])
-            if self.failures >= 3:
-                self.done = True
-                await self.say(self.messages["unavailable"])
+            if field in {'followup_date', 'age'}:
+                self.stage = 'DATE_KEYPAD'
+                self.date_digits = ''
+                await self.say(self.messages['date_keypad' if field == 'followup_date' else 'age_keypad'])
+            elif self.failures >= 3:
+                await self.save_draft()
             else:
                 await self.ask()
 
@@ -143,6 +199,79 @@ class PhoneConversation:
         from app.main import start_call, answer_call, call_action, finalize_call
         from fastapi import HTTPException
 
+        self.idle_count = 0
+        self.revision += 1
+        if self.stage == 'DATE_KEYPAD':
+            if digit == '*':
+                self.date_digits = ''
+            elif digit == '#' or (digit.isdigit() and len(self.date_digits + digit) == 8 and self.session['state'] == 'followup_date'):
+                if digit != '#':
+                    self.date_digits += digit
+                try:
+                    field = self.session['state']
+                    if field == 'followup_date':
+                        target = datetime.strptime(self.date_digits, '%d%m%Y').date()
+                        if len(self.date_digits) != 8 or target < datetime.now(timezone(timedelta(hours=5, minutes=30))).date():
+                            raise ValueError()
+                        value = {'date': target.isoformat(), 'phrase': self.date_digits}
+                    else:
+                        value = int(self.date_digits)
+                        if not 0 <= value <= 120:
+                            raise ValueError()
+                    session = db.get_call_session(self.session['session_id'])
+                    previous = session['answers'].get(field)
+                    session['answers'][field] = {'answer_id': str(uuid4()), 'question_id': field,
+                        'value': value, 'transcript': self.date_digits, 'evidence_quote': self.date_digits,
+                        'confirmed': False, 'needs_confirmation': True, 'extraction_source': 'keypad',
+                        'previous_attempts': ([*previous.get('previous_attempts', []), {k:v for k,v in previous.items() if k != 'previous_attempts'}] if previous else [])}
+                    db.update_call_session(session)
+                    from app.main import _session_response
+                    self.session = _session_response(session)
+                    await self.readback()
+                except ValueError:
+                    self.date_digits = ''
+                    await self.say(self.messages['invalid'] + ' ' + self.messages['date_keypad' if self.session['state'] == 'followup_date' else 'age_keypad'])
+            elif digit.isdigit() and len(self.date_digits) < 8:
+                self.date_digits += digit
+            return
+        if self.stage == 'FIELD_REVIEW':
+            if digit == '1':
+                self.review_index += 1
+                await self.review_field()
+            elif digit == '2':
+                field = self.review_fields[self.review_index]
+                if field in {'patient_name', 'age', 'symptoms', 'followup_date', 'notes'}:
+                    self.session = await call_action(self.session['session_id'], CallActionRequest(action='correct', field=field))
+                    self.review_edit = True
+                    await self.ask()
+                else:
+                    await self.say(self.messages['fixed_field'])
+            elif digit == '3':
+                await self.review_field()
+            elif digit == '9':
+                self.stage = 'SUBMIT'
+                await self.say(self.messages['submit_menu'])
+            else:
+                await self.say(self.messages['review_keys'])
+            return
+        if self.stage == 'SUBMIT':
+            self.review_fields = list(self.session['answers'])
+            if digit == '1':
+                try:
+                    await finalize_call(self.session['session_id'])
+                    self.done = True
+                    await self.say(self.messages['saved'])
+                except HTTPException:
+                    await self.save_draft()
+            elif digit == '2':
+                self.review_index = 0
+                await self.say(self.messages['review_keys'])
+                await self.review_field()
+            elif digit == '9':
+                await self.save_draft()
+            else:
+                await self.say(self.messages['submit_menu'])
+            return
         if self.stage == "LANGUAGE":
             if digit not in {"2", "4"}:
                 await self.welcome()
@@ -170,7 +299,21 @@ class PhoneConversation:
                     await self.say(self.messages["invalid"] + " " + self.messages["code"])
         elif self.stage == "ANSWER":
             item = question(self.session["state"])
-            if digit == "9" and item.get("optional"):
+            if digit == '4' and self.session['state'] in {'followup_date', 'age'}:
+                self.listening = False
+                self.stage = 'DATE_KEYPAD'
+                self.date_digits = ''
+                await self.say(self.messages['date_keypad' if self.session['state'] == 'followup_date' else 'age_keypad'])
+            elif digit == '9' and self.session['state'] == 'followup_date':
+                session = db.get_call_session(self.session['session_id'])
+                session['current_question_id'] = 'notes'
+                db.update_call_session(session)
+                from app.main import _session_response
+                self.session = _session_response(session)
+                await self.ask()
+            elif digit == '0':
+                await self.save_draft()
+            elif digit == "9" and item.get("optional"):
                 self.session = await call_action(self.session["session_id"], CallActionRequest(action="skip"))
                 await self.ask()
             elif item["type"] in {"boolean", "enum"}:
@@ -195,9 +338,10 @@ class PhoneConversation:
                 await self.readback()
         elif self.stage == "REVIEW":
             if digit == "1":
-                for field, answer in self.session["answers"].items():
-                    await self.say(self.messages[field] + " " + self.value_text(answer))
-                await self.say(self.messages["review"])
+                self.review_fields = list(self.session['answers'])
+                self.review_index = 0
+                await self.say(self.messages['review_keys'])
+                await self.review_field()
             elif digit == "2":
                 self.editable = [f for f in self.session["answers"] if f in {"patient_name", "age", "symptoms", "followup_date", "notes"}]
                 self.stage = "EDIT"
@@ -205,9 +349,10 @@ class PhoneConversation:
                 for i, field in enumerate(self.editable, 1):
                     await self.say(f"{i}. {self.messages[field]}")
             elif digit == "3":
-                await finalize_call(self.session["session_id"])
-                self.done = True
-                await self.say(self.messages["saved"])
+                self.stage = 'SUBMIT'
+                await self.say(self.messages['submit_menu'])
+            elif digit == '9':
+                await self.save_draft()
             else:
                 await self.say(self.messages["review"])
         elif self.stage == "EDIT":

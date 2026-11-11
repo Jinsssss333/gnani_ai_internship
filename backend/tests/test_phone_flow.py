@@ -61,6 +61,7 @@ class PhoneTests(unittest.TestCase):
             await answer("Monday", {"phrase": "Monday", "date": "2026-11-16"})
             self.assertEqual(phone.stage, "REVIEW")
             await phone.digit("3")
+            await phone.digit("1")
             self.assertTrue(phone.done)
             saved = db.finalize_call(phone.session["session_id"])
             self.assertEqual(len(db.list_visits()), 1)
@@ -128,7 +129,7 @@ class PhoneTests(unittest.TestCase):
             with TestClient(gateway) as client:
                 with client.websocket_connect("/api/telephony/exotel", headers=headers) as ws:
                     ws.send_json({"event": "start", "start": {"account_sid": "test-account", "call_sid": "call-test", "stream_sid": "stream-1", "media_format": {"encoding": "audio/x-raw", "sample_rate": "16000", "bit_rate": "16"}}})
-                    def listen():
+                    def listen(ack=True):
                         heard = False
                         while True:
                             message = ws.receive_json()
@@ -138,11 +139,12 @@ class PhoneTests(unittest.TestCase):
                                 self.assertEqual(len(frame) % 320, 0)
                                 heard = True
                             if message["event"] == "mark":
-                                ws.send_json(message)
+                                if ack:
+                                    ws.send_json(message)
                                 break
                         self.assertTrue(heard)
                     listen()
-                    listen()
+                    listen(ack=False)  # Keypress must interrupt unacknowledged playback.
                     ws.send_json({"event": "dtmf", "sequence_number": "1", "dtmf": {"digit": "4"}})
                     listen()
                     ws.send_json({"event": "stop"})

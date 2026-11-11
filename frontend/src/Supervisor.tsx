@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getAuditEvents, getVisits, getPhoneCalls, getPendingSessions, repairSession, finalizeCall } from "./api";
 import type { PendingSession } from "./api";
+import RegisterExport from './RegisterExport';
 import type { AuditEvent, VisitRecord } from "./types";
 
 const label = (text: string) => text.replaceAll("_", " ");
@@ -66,6 +67,7 @@ export default function Supervisor() {
     <main><div className="intro"><div><p className="eyebrow">SUPERVISOR</p><h1>{tab==='register'?'Visit register':tab==='calls'?'Calls':'Audit trail'}</h1><small>{updated ? `Updated ${updated} · Refreshes every 3s` : 'Connecting…'}</small></div><button onClick={()=>void refresh()}>Refresh</button></div>
     {error && <p role="alert" className="error">{error}</p>}
     {tab==='register' && <><div className="metrics">{[['Submitted',visits.length],['Needs review',pending.filter(p=>p.record_status==='needs_review').length],['In progress',pending.filter(p=>p.record_status==='in_progress').length]].map(([title,count])=><div key={title}><span>{title}</span><strong>{count}</strong></div>)}</div>
+    <RegisterExport visits={visits}/>
     <div className="filters" aria-label="Record status">{['all','in_progress','needs_review','submitted'].map(f=><button key={f} aria-pressed={filter===f} onClick={()=>setFilter(f)}>{label(f)}</button>)}</div>
     <section className="register"><div className="table-wrap"><table><thead><tr><th>Patient / code</th><th>Status</th><th>Details</th><th>Updated</th><th></th></tr></thead><tbody>{rows.map(r=><tr key={r.id}><td><strong>{r.name}</strong><small>{r.code}</small></td><td><span className={`pill ${r.status}`}>{label(r.status)}</span></td><td>{r.detail}</td><td>{new Date(r.date).toLocaleString('en-IN')}</td><td><button onClick={()=>setSelected(r.id)}>Open</button></td></tr>)}</tbody></table></div>{!rows.length && <p className="empty">No records here yet.</p>}</section>
     {selected && (draft || saved) && <section className="register" aria-label="Record details"><div className="intro"><h2>{draft ? 'Review draft' : 'Submitted visit'}</h2><button onClick={()=>setSelected(null)}>Close</button></div><div className="field-grid">{!answers && saved && Object.entries(saved.visit).filter(([key]) => ["patient_name","age","symptoms","follow_up_date","follow_up_phrase","notes"].includes(key)).map(([key,value]) => <article key={key}><small>{label(key)}</small><p>{Array.isArray(value) ? value.join(", ") : key === "follow_up_date" && value ? display({date:value}) : display(value)}</p></article>)}{Object.entries(answers || {}).map(([key,a])=><article key={key}><small>{label(key)}</small><p>{display(a.value)}</p><span className="pill">{a.confirmed ? 'Confirmed' : a.unresolved && ['notes','symptoms'].includes(key) ? 'Optional · skipped' : 'Needs review'}</span></article>)}</div>

@@ -314,7 +314,8 @@ async def confirm_visit(payload: ConfirmVisit) -> dict:
 
 @app.get("/api/visits")
 async def get_visits() -> list[dict]:
-    return db.list_visits()
+    # The supervisor's date-range exports must include older records too.
+    return db.list_visits(limit=-1)
 
 
 @app.delete("/api/visits/{visit_id}")

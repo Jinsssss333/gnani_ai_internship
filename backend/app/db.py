@@ -263,7 +263,7 @@ def finalize_call(session_id: str) -> dict:
             "follow_up_date": followup.get("date") if isinstance(followup, dict) else None,
             "notes": value("notes"), "visit_code": row["visit_code"],
             "visit_status": "completed" if value("visit_done") else "not_completed",
-            "review_status": "confirmed", "sync_status": "synced", "evidence": active,
+            "not_done_reason": value("not_done_reason"), "review_status": "confirmed", "sync_status": "synced", "evidence": active,
         }
         transcript = "\n".join(f"{key}: {answer['transcript']}" for key, answer in active.items())
         saved = {"id": session_id, "created_at": row["created_at"], "transcript": transcript,

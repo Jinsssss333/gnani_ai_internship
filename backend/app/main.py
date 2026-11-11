@@ -36,6 +36,8 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="SunoCare API", version="0.2.0", lifespan=lifespan)
 app.include_router(telephony_router)
+from app.recovery import router as recovery_router
+app.include_router(recovery_router)
 origins = [
     origin.strip()
     for origin in os.getenv(

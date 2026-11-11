@@ -57,7 +57,7 @@ class PhoneTests(unittest.TestCase):
             await phone.digit("9")
             self.assertEqual(phone.stage, "REVIEW")
             await phone.digit("2")
-            await phone.digit("4")
+            await phone.digit("6")
             await answer("Monday", {"phrase": "Monday", "date": "2026-11-16"})
             self.assertEqual(phone.stage, "REVIEW")
             await phone.digit("3")

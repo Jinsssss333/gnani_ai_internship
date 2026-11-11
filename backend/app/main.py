@@ -14,7 +14,7 @@ from fastapi.responses import Response
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from app import db
-from app.call_flow import FINAL_REVIEW, allowed_action, next_question
+from app.call_flow import FINAL_REVIEW, allowed_action, next_question, active_fields, first_unresolved
 from app.questions import prompt, question
 from app.providers import evon, prisma, timbre
 from app.telephony import router as telephony_router
@@ -190,15 +190,15 @@ async def call_action(session_id: str, payload: CallActionRequest) -> dict:
     session = _session_or_404(session_id)
     current_id = session["current_question_id"]
     if current_id == FINAL_REVIEW and payload.action == "correct":
-        editable = {"patient_name", "age", "symptoms", "followup_date", "notes"}
-        if payload.field not in editable or payload.field not in session["answers"]:
+        if payload.field not in active_fields(session['answers']):
             raise HTTPException(status_code=422, detail="Choose an answered detail to correct.")
         session["current_question_id"] = payload.field
         session["status"] = "awaiting_confirmation"
-        answer = session["answers"][payload.field]
-        answer["confirmed"] = False
-        answer["needs_confirmation"] = True
-        answer["awaiting_replacement"] = True
+        answer = session["answers"].get(payload.field)
+        if answer:
+            answer["confirmed"] = False
+            answer["needs_confirmation"] = True
+            answer["awaiting_replacement"] = True
         db.update_call_session(session)
         return _session_response(session)
     if current_id in {FINAL_REVIEW, "SAVED"}:
@@ -213,8 +213,9 @@ async def call_action(session_id: str, payload: CallActionRequest) -> dict:
         answer["needs_confirmation"] = False
         session["current_question_id"] = next_question(current_id, answer["value"])
         if session["status"] == "awaiting_confirmation":
-            session["current_question_id"] = FINAL_REVIEW
-            session["status"] = "in_progress"
+            session["current_question_id"] = first_unresolved(session['answers'])
+            if session['current_question_id'] == FINAL_REVIEW:
+                session["status"] = "in_progress"
     elif payload.action == "skip":
         session["answers"][current_id] = {
             "answer_id": f"skipped-{current_id}", "question_id": current_id,
@@ -224,8 +225,9 @@ async def call_action(session_id: str, payload: CallActionRequest) -> dict:
         }
         session["current_question_id"] = next_question(current_id, None)
         if session["status"] == "awaiting_confirmation":
-            session["current_question_id"] = FINAL_REVIEW
-            session["status"] = "in_progress"
+            session["current_question_id"] = first_unresolved(session['answers'])
+            if session['current_question_id'] == FINAL_REVIEW:
+                session["status"] = "in_progress"
     elif payload.action == "unresolved":
         session["current_question_id"] = next_question(current_id, answer["value"] if answer else None)
     elif payload.action == "correct" and answer:

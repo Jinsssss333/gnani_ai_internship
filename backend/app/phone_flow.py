@@ -13,6 +13,7 @@ from app.phone_fields import extract_field
 from app.phone_prompts import LANGUAGE_MENU, PROMPTS
 from app.providers import prisma
 from app.questions import question
+from app.call_flow import active_fields, first_unresolved
 from app.schemas import CallActionRequest, CallAnswerRequest, CallStartRequest
 
 
@@ -52,7 +53,7 @@ class PhoneConversation:
             return
         self.stage = 'FIELD_REVIEW'
         field = self.review_fields[self.review_index]
-        await self.say(self.messages.get('label_' + field, field.replace('_', ' ')) + ': ' + self.value_text(self.session['answers'][field]))
+        await self.say(self.messages.get('label_' + field, field.replace('_', ' ')) + ': ' + self.value_text(self.session['answers'].get(field, {})))
 
     async def idle(self):
         self.idle_count += 1
@@ -116,9 +117,21 @@ class PhoneConversation:
     async def ask(self):
         state = self.session["state"]
         self.audio.clear()
+        if state == 'FINAL_REVIEW':
+            missing = first_unresolved(self.session['answers'])
+            if missing != 'FINAL_REVIEW':
+                session = db.get_call_session(self.session['session_id'])
+                session['current_question_id'] = missing
+                db.update_call_session(session)
+                from app.main import _session_response
+                self.session = _session_response(session)
+                await self.say(self.messages['missing_required'])
+                await self.ask()
+                return
         if state == "FINAL_REVIEW" and self.review_edit:
             self.review_edit = False
-            self.review_index += 1
+            self.review_fields = active_fields(self.session['answers'])
+            self.review_index = 0
             await self.review_field()
             return
         if state == "FINAL_REVIEW":
@@ -140,7 +153,9 @@ class PhoneConversation:
     async def readback(self):
         self.stage = "CONFIRM"
         answer = self.session["answers"][self.session["state"]]
-        await self.say(f"{self.messages['heard']}: {self.value_text(answer)}. {self.messages['confirm']}")
+        context = self.messages.get('label_' + self.session['state'], self.messages['heard'])
+        explanation = self.messages['not_completed_branch'] if self.session['state'] == 'visit_done' and answer.get('value') is False else ''
+        await self.say(f"{context}: {self.value_text(answer)}. {explanation} {self.messages['confirm']}")
 
     async def finish_audio(self):
         from app.main import _session_response
@@ -240,7 +255,7 @@ class PhoneConversation:
                 await self.review_field()
             elif digit == '2':
                 field = self.review_fields[self.review_index]
-                if field in {'patient_name', 'age', 'symptoms', 'followup_date', 'notes'}:
+                if field in active_fields(self.session['answers']):
                     self.session = await call_action(self.session['session_id'], CallActionRequest(action='correct', field=field))
                     self.review_edit = True
                     await self.ask()
@@ -255,7 +270,7 @@ class PhoneConversation:
                 await self.say(self.messages['review_keys'])
             return
         if self.stage == 'SUBMIT':
-            self.review_fields = list(self.session['answers'])
+            self.review_fields = active_fields(self.session['answers'])
             if digit == '1':
                 try:
                     await finalize_call(self.session['session_id'])
@@ -338,12 +353,12 @@ class PhoneConversation:
                 await self.readback()
         elif self.stage == "REVIEW":
             if digit == "1":
-                self.review_fields = list(self.session['answers'])
+                self.review_fields = active_fields(self.session['answers'])
                 self.review_index = 0
                 await self.say(self.messages['review_keys'])
                 await self.review_field()
             elif digit == "2":
-                self.editable = [f for f in self.session["answers"] if f in {"patient_name", "age", "symptoms", "followup_date", "notes"}]
+                self.editable = active_fields(self.session['answers'])
                 self.stage = "EDIT"
                 await self.say(self.messages["edit"])
                 for i, field in enumerate(self.editable, 1):

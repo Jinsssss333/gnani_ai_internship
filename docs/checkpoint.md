@@ -354,3 +354,13 @@ The user reports a real Exotel call reached the form but failed around the follo
 - Frontend TypeScript/Vite production build passed. Browser inspection verified the redesigned page, existing submitted records, recovered real-call draft, and date repair control. No real patient data or new sample records were added to the working database.
 - Started local API 8003, gateway 8002, Vite 5173 as hidden processes. Frontend .env.local already targets 8003. Gateway uses the existing provider credentials. Tunnel availability and a fresh real call still require validation before a demo.
 - No remote push. Changes are saved in focused local commits.
+
+## 17. 11 November — correct visit branching during phone review
+
+- The latest real call was saved with confirmed visit_done=false (keypad input 2) and not_done_reason=refused. Consequently it legitimately followed the unsuccessful-visit branch: reason, follow-up date, notes. The evidence establishes the stored choice, not whether the user intended that choice.
+- Found a recovery limitation: final review previously prohibited changing visit_done/followup_needed and listed only previously captured patient fields. This is now fixed. Every active field, including branching answers and absent active fields, can be selected for correction.
+- After correcting a branching answer, the API walks the newly active path and asks every unresolved field before returning to review. Changing unsuccessful to successful therefore requires name, age, symptoms (or explicit optional skip), and follow-up choice. Historical answers stay stored, but irrelevant branch fields are excluded from spoken review and final evidence.
+- Before entering review, the phone flow now directs missing required answers back to their question. Explicit draft saving remains available; a required missing date cannot silently pass submission.
+- Opening prompts in both languages now explain that 1 means the patient visit was carried out and leads to patient details; 2 means it could not be carried out. The negative read-back explicitly explains that patient fields will be skipped and offers correction.
+- Validation: 21 tests passed, including unsuccessful-to-successful correction, missing patient submission rejection, active review filtering, and missing date recovery. A fresh real call is still needed to verify the revised spoken interaction.
+- The previous four commits were pushed to origin/dev at the user's request. This follow-up fix is committed locally; it has not been pushed automatically.

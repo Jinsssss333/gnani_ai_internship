@@ -177,8 +177,11 @@ class PhoneConversation:
             wav.writeframes(bytes(self.audio))
         data = output.getvalue()
         (directory / f"{answer_id}.wav").write_bytes(data)
+        transcript = ''
+        processing_step = 'transcription'
         try:
             transcript = await asyncio.wait_for(prisma.transcribe(data, "answer.wav", "audio/wav", self.language), 25)
+            processing_step = 'extraction'
             today = datetime.now(timezone(timedelta(hours=5, minutes=30))).date()
             value, evidence = await extract_field(field, transcript, self.language, today)
             session = db.get_call_session(session_id)
@@ -197,8 +200,21 @@ class PhoneConversation:
             db.update_call_session(session)
             self.session = _session_response(session)
             self.failures = 0
-            await self.readback()
         except (ValueError, RuntimeError, TimeoutError, KeyError, IndexError, httpx.HTTPError):
+            # Keep failed attempts recoverable without treating them as accepted values.
+            session = db.get_call_session(session_id)
+            prior = session['answers'].get(field)
+            history = [] if not prior else [*prior.get('previous_attempts', []),
+                {k: v for k, v in prior.items() if k != 'previous_attempts'}]
+            session['answers'][field] = {
+                'answer_id': answer_id, 'question_id': field, 'transcript': transcript,
+                'value': None, 'evidence_quote': '', 'confirmed': False,
+                'needs_confirmation': True, 'awaiting_replacement': True,
+                'failure_stage': processing_step, 'audio_ref': f'{session_id}/{answer_id}.wav',
+                'previous_attempts': history,
+            }
+            db.update_call_session(session)
+            self.session = _session_response(session)
             self.failures += 1
             await self.say(self.messages["failed"])
             if field in {'followup_date', 'age'}:
@@ -209,6 +225,9 @@ class PhoneConversation:
                 await self.save_draft()
             else:
                 await self.ask()
+            return
+        # Playback failure must not overwrite a successfully extracted answer.
+        await self.readback()
 
     async def digit(self, digit):
         from app.main import start_call, answer_call, call_action, finalize_call

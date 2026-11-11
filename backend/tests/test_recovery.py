@@ -10,6 +10,24 @@ from app.phone_flow import PhoneConversation
 
 
 class RecoveryTests(unittest.TestCase):
+    def test_rejected_name_keeps_transcript_without_accepting_it(self):
+        async def scenario():
+            phone = PhoneConversation(AsyncMock())
+            for digit in '41482111':
+                await phone.digit(digit)
+            phone.add_audio(b'\0\0' * 8000)
+            with patch.dict(os.environ, {'AUDIO_STORAGE_PATH': self.temp.name + '/audio'}), patch(
+                'app.phone_flow.prisma.transcribe', AsyncMock(return_value='akash e')), patch(
+                'app.phone_flow.extract_field', AsyncMock(side_effect=ValueError('unclear'))):
+                await phone.digit('1')
+            saved = db.get_call_session(phone.session['session_id'])['answers']['patient_name']
+            self.assertEqual(saved['transcript'], 'akash e')
+            self.assertEqual(saved['failure_stage'], 'extraction')
+            self.assertTrue(saved['awaiting_replacement'])
+            self.assertIsNone(saved['value'])
+            self.assertFalse(saved['confirmed'])
+        asyncio.run(scenario())
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.env = patch.dict(os.environ, {'DATABASE_PATH': self.temp.name + '/visits.db'})

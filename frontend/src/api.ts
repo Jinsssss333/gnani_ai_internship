@@ -85,7 +85,7 @@ export async function finalizeCall(sessionId: string): Promise<{ visit: VisitRec
 }
 
 export async function getVisits(): Promise<VisitRecord[]> {
-  const response = await fetch(`${API_BASE}/api/visits`);
+  const response = await fetch(`${API_BASE}/api/visits`, {signal: AbortSignal.timeout(10000)});
   if (!response.ok) throw new Error(await readError(response));
   return response.json() as Promise<VisitRecord[]>;
 }
@@ -170,7 +170,7 @@ export async function syncAuditEvent(event: AuditEvent): Promise<void> {
 }
 
 export async function getAuditEvents(): Promise<AuditEvent[]> {
-  const response = await fetch(`${API_BASE}/api/audit`);
+  const response = await fetch(`${API_BASE}/api/audit`, {signal: AbortSignal.timeout(10000)});
   if (!response.ok) throw new Error(await readError(response));
   return response.json() as Promise<AuditEvent[]>;
 }
@@ -183,4 +183,20 @@ export async function requestTts(text: string, language: string): Promise<Blob> 
   });
   if (!response.ok) throw new Error(await readError(response));
   return response.blob();
+}
+
+export type PendingSession = {
+  id: string; visit_code: string; updated_at: string; record_status: string;
+  missing_field: string; answers: Record<string, GuidedAnswer>;
+};
+export async function getPendingSessions(): Promise<PendingSession[]> {
+  const r = await fetch(`${API_BASE}/api/register/sessions`, {signal: AbortSignal.timeout(10000)});
+  if (!r.ok) throw new Error(await readError(r));
+  return r.json();
+}
+export async function repairSession(id: string, field: string, text: string) {
+  const r = await fetch(`${API_BASE}/api/register/sessions/${encodeURIComponent(id)}/answer`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({field, text}), signal: AbortSignal.timeout(10000)
+  });
+  if (!r.ok) throw new Error(await readError(r));
 }

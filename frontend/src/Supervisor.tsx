@@ -1,38 +1,79 @@
-import { useCallback, useEffect, useState } from "react";
-import { getAuditEvents, getVisits, getTelephonyStatus, getPhoneCalls } from "./api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { getAuditEvents, getVisits, getPhoneCalls, getPendingSessions, repairSession, finalizeCall } from "./api";
+import type { PendingSession } from "./api";
 import type { AuditEvent, VisitRecord } from "./types";
 
-type PhoneStatus = Awaited<ReturnType<typeof getTelephonyStatus>>;
-type Evidence = { transcript: string; evidence_quote: string; confirmed: boolean; previous_attempts?: { transcript: string }[] };
-
+const label = (text: string) => text.replaceAll("_", " ");
+function display(value: unknown): string {
+  if (value == null) return "Not provided";
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'object') {
+    const v = value as Record<string, unknown>;
+    if (v.date) return String(v.date).split('-').reverse().join('/');
+    return Object.entries(v).map(([k,x]) => `${label(k)}: ${Array.isArray(x) ? x.join(', ') || 'None' : x}`).join(' · ');
+  }
+  return String(value);
+}
 export default function Supervisor() {
   const [visits, setVisits] = useState<VisitRecord[]>([]);
+  const [pending, setPending] = useState<PendingSession[]>([]);
   const [audit, setAudit] = useState<AuditEvent[]>([]);
-  const [phone, setPhone] = useState<PhoneStatus | null>(null);
   const [calls, setCalls] = useState<Awaited<ReturnType<typeof getPhoneCalls>>>([]);
-  const [error, setError] = useState("");
-  const [updated, setUpdated] = useState("");
-  const [selected, setSelected] = useState<VisitRecord | null>(null);
+  const [tab, setTab] = useState('register');
+  const [filter, setFilter] = useState('all');
+  const [selected, setSelected] = useState<string | null>(null);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [updated, setUpdated] = useState('');
+  const loading = useRef(false);
   const refresh = useCallback(async () => {
+    if (loading.current) return;
+    loading.current = true;
     try {
-      const [records, events, status, callLog] = await Promise.all([getVisits(), getAuditEvents(), getTelephonyStatus(), getPhoneCalls()]);
-      setCalls(callLog);
-      setVisits(records); setAudit(events); setPhone(status); setError("");
-      setUpdated(new Date().toLocaleTimeString());
-    } catch { setError("Backend unavailable. Previously loaded records remain visible."); }
+      // Register updates do not depend on the phone-status or audit services.
+      const [v, p] = await Promise.all([getVisits(), getPendingSessions()]);
+      setVisits(v); setPending(p); setError(''); setUpdated(new Date().toLocaleTimeString());
+      const results = await Promise.allSettled([getAuditEvents(), getPhoneCalls()]);
+      if (results[0].status === 'fulfilled') setAudit(results[0].value);
+      if (results[1].status === 'fulfilled') setCalls(results[1].value);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Unable to refresh.'); }
+    finally { loading.current = false; }
   }, []);
-  useEffect(() => { void refresh(); const timer = window.setInterval(() => void refresh(), 5000); return () => clearInterval(timer); }, [refresh]);
-  const evidence = (selected?.visit as unknown as { evidence?: Record<string, Evidence> })?.evidence;
+  useEffect(() => { void refresh(); const id = window.setInterval(() => void refresh(), 3000); return () => clearInterval(id); }, [refresh]);
+  const draft = pending.find(p => p.id === selected);
+  const saved = visits.find(v => v.id === selected);
+  const answers = draft?.answers || (saved?.visit as unknown as {evidence?: PendingSession['answers']})?.evidence;
+  const field = draft?.missing_field;
+  useEffect(() => setInput(''), [selected, field]);
+  async function resolve(submit = false) {
+    if (!draft) return;
+    setBusy(true);
+    try {
+      if (submit) await finalizeCall(draft.id);
+      else await repairSession(draft.id, draft.missing_field, input);
+      await refresh();
+    } catch(e) { setError(e instanceof Error ? e.message : 'Could not save.'); }
+    finally { setBusy(false); }
+  }
+  const rows = [
+    ...pending.map(p => ({id:p.id, name:display(p.answers.patient_name?.value), code:p.visit_code, status:p.record_status, date:p.updated_at, detail:p.missing_field === 'FINAL_REVIEW' ? 'Ready to submit' : `Next: ${label(p.missing_field)}`})),
+    ...visits.map(v => ({id:v.id, name:v.visit.patient_name || 'Home visit', code:String((v.visit as unknown as {visit_code?: string}).visit_code || '—'), status:'submitted', date:v.created_at, detail:v.visit.follow_up_date ? `Follow-up ${display({date:v.visit.follow_up_date})}` : v.visit.follow_up_phrase ? `Follow-up: ${v.visit.follow_up_phrase}` : 'No follow-up date'}))
+  ].filter(r => filter === 'all' || r.status === filter);
   return <div className="supervisor">
-    <header><div><strong>SunoCare</strong><span>Listen. Confirm. Care.</span></div><span className="pill">Synthetic demo · Supervisor</span></header>
-    <main>
-      <section className="intro"><div><p className="eyebrow">PHONE VISIT REGISTER</p><h1>Calls become confirmed records.</h1><p>Workers use their phone keypad and voice. Review the saved results here.</p></div><button onClick={() => void refresh()}>Refresh</button></section>
-      {error && <p className="error" role="alert">{error}</p>}
-      <section className="phone-status"><div><span className="eyebrow">INBOUND NUMBER</span><h2>{phone?.phone_number || "Awaiting Exotel setup"}</h2><p>{phone?.transport_configured ? "Transport configured · a real call still needs verification" : "Activate an inbound number with the Exotel Voicebot applet to connect the caller."}</p></div><div><strong>{visits.length}</strong><span>Saved visits</span><small>{updated ? `Updated ${updated}` : "Connecting…"}</small></div></section>
-      <section className="register"><h2>Visit register</h2>{visits.length === 0 ? <p className="empty">Confirmed phone visits will appear here automatically.</p> : <div className="table-wrap"><table><thead><tr><th>Patient</th><th>Age</th><th>Symptoms</th><th>Follow-up</th><th>Saved</th><th>Evidence</th></tr></thead><tbody>{visits.map(v => <tr key={v.id}><td>{v.visit.patient_name || "Unnamed visit"}</td><td>{v.visit.age ?? "—"}</td><td>{v.visit.symptoms.join(", ") || "—"}</td><td>{v.visit.follow_up_date || v.visit.follow_up_phrase || "—"}</td><td>{new Date(v.created_at).toLocaleString()}</td><td><button onClick={() => setSelected(v)}>Review</button></td></tr>)}</tbody></table></div>}</section>
-      <section className="register"><h2>Audit trail</h2>{audit.length ? <ul>{audit.slice(0, 20).map(event => <li key={event.id}><strong>{event.summary}</strong><span>{new Date(event.occurred_at).toLocaleString()} · {event.actor}</span></li>)}</ul> : <p className="empty">No saved events yet.</p>}</section>
-      {selected && <section className="register" aria-label="Visit evidence"><div className="intro"><h2>{selected.visit.patient_name || "Visit"} · Evidence</h2><button onClick={() => setSelected(null)}>Close</button></div>{evidence ? Object.entries(evidence).map(([field, answer]) => <article className="evidence" key={field}><strong>{field.replaceAll("_", " ")}</strong><span className="pill">{answer.confirmed ? "Worker confirmed" : "Skipped / unresolved"}</span><blockquote>{answer.transcript || "No answer"}</blockquote><p>Supporting quote: {answer.evidence_quote || "—"}</p>{!!answer.previous_attempts?.length && <details><summary>Previous answers ({answer.previous_attempts.length})</summary>{answer.previous_attempts.map((attempt, i) => <p key={i}>{attempt.transcript}</p>)}</details>}</article>) : <p>{selected.transcript}</p>}</section>}
-      <section className="register"><h2>Call log</h2>{calls.length ? <ul>{calls.map(call => <li key={call.call_sid}><strong>{call.status.replaceAll("_", " ")}</strong><span>{new Date(call.started_at).toLocaleString()} · {call.call_sid}</span><span>{call.session_id ? `Visit session: ${call.session_id}` : "Ended before a visit was started"}</span></li>)}</ul> : <p className="empty">No phone calls received yet.</p>}</section>
-    </main>
-  </div>;
+    <header><strong>SunoCare<span className="brand-dot">●</span></strong><span className="pill">Synthetic demo</span></header>
+    <div className="layout"><nav aria-label="Workspace">{[['register','Visit register'],['calls','Calls'],['audit','Audit trail']].map(([id,text]) => <button key={id} aria-current={tab===id?'page':undefined} onClick={()=>setTab(id)}>{text}</button>)}</nav>
+    <main><div className="intro"><div><p className="eyebrow">SUPERVISOR</p><h1>{tab==='register'?'Visit register':tab==='calls'?'Calls':'Audit trail'}</h1><small>{updated ? `Updated ${updated} · Refreshes every 3s` : 'Connecting…'}</small></div><button onClick={()=>void refresh()}>Refresh</button></div>
+    {error && <p role="alert" className="error">{error}</p>}
+    {tab==='register' && <><div className="metrics">{[['Submitted',visits.length],['Needs review',pending.filter(p=>p.record_status==='needs_review').length],['In progress',pending.filter(p=>p.record_status==='in_progress').length]].map(([title,count])=><div key={title}><span>{title}</span><strong>{count}</strong></div>)}</div>
+    <div className="filters" aria-label="Record status">{['all','in_progress','needs_review','submitted'].map(f=><button key={f} aria-pressed={filter===f} onClick={()=>setFilter(f)}>{label(f)}</button>)}</div>
+    <section className="register"><div className="table-wrap"><table><thead><tr><th>Patient / code</th><th>Status</th><th>Details</th><th>Updated</th><th></th></tr></thead><tbody>{rows.map(r=><tr key={r.id}><td><strong>{r.name}</strong><small>{r.code}</small></td><td><span className={`pill ${r.status}`}>{label(r.status)}</span></td><td>{r.detail}</td><td>{new Date(r.date).toLocaleString('en-IN')}</td><td><button onClick={()=>setSelected(r.id)}>Open</button></td></tr>)}</tbody></table></div>{!rows.length && <p className="empty">No records here yet.</p>}</section>
+    {selected && (draft || saved) && <section className="register" aria-label="Record details"><div className="intro"><h2>{draft ? 'Review draft' : 'Submitted visit'}</h2><button onClick={()=>setSelected(null)}>Close</button></div><div className="field-grid">{!answers && saved && Object.entries(saved.visit).filter(([key]) => ["patient_name","age","symptoms","follow_up_date","follow_up_phrase","notes"].includes(key)).map(([key,value]) => <article key={key}><small>{label(key)}</small><p>{Array.isArray(value) ? value.join(", ") : key === "follow_up_date" && value ? display({date:value}) : display(value)}</p></article>)}{Object.entries(answers || {}).map(([key,a])=><article key={key}><small>{label(key)}</small><p>{display(a.value)}</p><span className="pill">{a.confirmed ? 'Confirmed' : a.unresolved && ['notes','symptoms'].includes(key) ? 'Optional · skipped' : 'Needs review'}</span></article>)}</div>
+    {draft?.record_status==='in_progress' && <p>Call in progress. Answers update automatically.</p>}
+    {draft?.record_status==='needs_review' && (field==='FINAL_REVIEW' ? <button disabled={busy} onClick={()=>void resolve(true)}>Confirm and submit visit</button> : <form onSubmit={e=>{e.preventDefault();void resolve();}}><label htmlFor="repair">Resolve {label(field || '')}</label>
+    {['visit_done','followup_needed','not_done_reason'].includes(field || '') ? <select id="repair" required value={input} onChange={e=>setInput(e.target.value)}><option value="">Select…</option>{(field==='not_done_reason' ? [['1','House locked'],['2','Patient away'],['3','Refused'],['4','Other']] : [['1','Yes'],['2','No']]).map(([v,t])=><option key={v} value={v}>{t}</option>)}</select> : <input id="repair" required={!["notes", "symptoms"].includes(field || "")} type={field==='followup_date'?'date':field==='age'?'number':'text'} min={field==='age'?0:undefined} max={field==='age'?120:undefined} value={input} onChange={e=>setInput(e.target.value)}/>}
+    <button disabled={busy}>Confirm answer</button></form>)}</section>}</>}
+    {tab==='calls' && <section className="register"><ul>{calls.map(c=><li key={c.call_sid}><strong>{label(c.status)}</strong><span>{new Date(c.started_at).toLocaleString()}</span>{c.session_id && <button onClick={()=>{setSelected(c.session_id);setTab('register');}}>Open record</button>}</li>)}</ul>{!calls.length && <p>No calls yet.</p>}</section>}
+    {tab==='audit' && <section className="register"><ul>{audit.map(e=><li key={e.id}><strong>{e.summary}</strong><span>{new Date(e.occurred_at).toLocaleString()} · {e.actor}</span></li>)}</ul>{!audit.length && <p>No changes yet.</p>}</section>}
+    </main></div></div>;
 }

@@ -61,7 +61,7 @@ export default function Supervisor() {
     ...visits.map(v => ({id:v.id, name:v.visit.patient_name || 'Home visit', code:String((v.visit as unknown as {visit_code?: string}).visit_code || '—'), status:'submitted', date:v.created_at, detail:v.visit.follow_up_date ? `Follow-up ${display({date:v.visit.follow_up_date})}` : v.visit.follow_up_phrase ? `Follow-up: ${v.visit.follow_up_phrase}` : 'No follow-up date'}))
   ].filter(r => filter === 'all' || r.status === filter);
   return <div className="supervisor">
-    <header><strong>SunoCare<span className="brand-dot">●</span></strong><span className="pill">Synthetic demo</span></header>
+    <header><strong>SunoCare<span className="brand-dot">●</span></strong></header>
     <div className="layout"><nav aria-label="Workspace">{[['register','Visit register'],['calls','Calls'],['audit','Audit trail']].map(([id,text]) => <button key={id} aria-current={tab===id?'page':undefined} onClick={()=>setTab(id)}>{text}</button>)}</nav>
     <main><div className="intro"><div><p className="eyebrow">SUPERVISOR</p><h1>{tab==='register'?'Visit register':tab==='calls'?'Calls':'Audit trail'}</h1><small>{updated ? `Updated ${updated} · Refreshes every 3s` : 'Connecting…'}</small></div><button onClick={()=>void refresh()}>Refresh</button></div>
     {error && <p role="alert" className="error">{error}</p>}

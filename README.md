@@ -22,7 +22,7 @@ Keypad choices bypass speech extraction. Voice is processed after each answer, n
 - **Phone transport:** Exotel Voicebot/AgentStream, raw mono 16-bit PCM over WSS.
 - **Backend:** Python, FastAPI, HTTPX, Pydantic and SQLite.
 - **AI:** Gnani Prisma STT, Gemini extraction and Gnani Timbre TTS. Phone extraction has no demo-parser fallback.
-- **Supervisor:** React, TypeScript and Vite. Read-only register, evidence and call log.
+- **Supervisor:** React, TypeScript and Vite. Register, draft recovery, evidence, call log and period exports.
 - **Persistence:** SQLite stores sessions, structured answers, transcripts, corrections and final records. Per-answer WAV files remain on the backend; browser playback of those files is not implemented.
 
 The caller needs cellular service. Exotel and the backend need internet access. There is no offline telephone transcription or automatic resume after a dropped call. Legacy browser recorder code remains in the repository but is not the mounted UI.
@@ -38,7 +38,7 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 # Preserve any existing credentials:
 if (!(Test-Path .env)) { Copy-Item .env.example .env }
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8003
 ```
 
 In a second terminal, from the repository root:
@@ -46,7 +46,7 @@ In a second terminal, from the repository root:
 ```powershell
 cd frontend
 npm install
-if (!(Test-Path .env.local)) { Set-Content .env.local 'VITE_API_BASE_URL=http://127.0.0.1:8001' }
+if (!(Test-Path .env.local)) { Set-Content .env.local 'VITE_API_BASE_URL=http://127.0.0.1:8003' }
 npm run dev
 ```
 
@@ -67,13 +67,23 @@ From `backend`:
 
 From `frontend`: `npm run build` and `node --check public/sw.js`.
 
-Latest verified state (10 November 2026):
+## Review, recover and export
 
-- 15 offline backend tests pass, including a mocked Exotel socket, correction, finalization and gateway access checks.
+- The register refreshes every three seconds. In progress means an active call; Needs review means unfinished documentation; Submitted means a finalized record. A home visit that could not be carried out can still have a submitted record.
+- Open a draft to resolve its next missing answer. Complete the required fields, then choose **Confirm and submit visit**. Active calls cannot be edited from the dashboard.
+- Phone review reads one field at a time: **1 next, 2 edit, 3 repeat, 9 finish reviewing**. The final menu offers **1 submit, 2 review again, 9 draft**. Instructions repeat after inactivity. Editing visit completion rechecks the newly applicable patient fields.
+- Age and follow-up date offer **4** for keypad input. Date: eight digits **DDMMYYYY**; age: digits then **#**. Press **\*** to clear. Dates are spoken day/month/year and stored as ISO dates.
+- Expand **Export submitted visits** in the register. Choose From and To dates, or leave either blank for an open-ended range. Both boundary dates are included using the record's creation date in **Asia/Kolkata**, not its follow-up date or final submission time.
+- **Download Excel** produces a genuine `.xlsx` workbook with filters, frozen headers and wrapped cells. **PDF / Print** opens a report; click **Print / Save as PDF** and select **Save as PDF** in your browser. Pop-ups must be allowed. PDF is a browser print workflow, not an automatic PDF download.
+- Exports contain all loaded, non-deleted submitted visits in the selected period, independent of the status filter. They include patient details, symptoms, follow-up, notes, visit outcome/reason and existing vitals. Drafts, call audio and audit events are excluded. The local register API returns the full submitted history without the former 100-record cap.
+
+Latest verified state (11 November 2026):
+
+- 22 offline backend tests passed before the export addition, including call corrections, draft recovery, finalization and gateway access checks.
 - Frontend production build and service-worker syntax check pass.
 - Live Hindi Timbre → Prisma round-trip and English Timbre generation pass.
 - Gemini uses `gemini-3.5-flash-lite` with the existing key. Live synthetic age correction, symptom negation and Hindi Timbre → Prisma → Gemini age extraction passed. These smoke tests do not establish general extraction accuracy.
-- No Exotel account/number is configured; a real inbound call remains unverified.
+- Real Exotel calls have reached the form and created records. Name transcription accuracy remains under investigation: clearly spoken Akash was transcribed differently; extraction now preserves name candidates for explicit caller confirmation. Do not assume provider smoke tests prove recognition accuracy.
 
 ## Project map
 
@@ -87,6 +97,9 @@ Latest verified state (10 November 2026):
 | `backend/app/db.py` | Sessions, atomic finalization, visits and audit persistence |
 | `shared/questions.json` | Branching form definition |
 | `frontend/src/Supervisor.tsx` | Current browser UI |
+| `frontend/src/RegisterExport.tsx` | Inclusive IST period selection, Excel download and printable report |
+| `backend/app/recovery.py` | Local draft recovery and supervisor answer confirmation |
+| `docs/checkpoint.md` | Detailed implementation history and current limitations |
 | `docs/PHONE_DEMO.md` | Account setup, WSS configuration and demo script |
 
 Use fictional data only. Visit codes identify demo assignments; they do not authenticate a worker. Keep the supervisor local for this prototype.

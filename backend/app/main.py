@@ -1,4 +1,5 @@
 import os
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,8 +14,18 @@ from fastapi.responses import Response
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from app import db
+from app.call_flow import FINAL_REVIEW, allowed_action, next_question
+from app.questions import prompt, question
 from app.providers import evon, prisma, timbre
-from app.schemas import AuditEvent, ConfirmVisit, TtsRequest
+from app.telephony import router as telephony_router
+from app.schemas import (
+    AuditEvent,
+    CallActionRequest,
+    CallAnswerRequest,
+    CallStartRequest,
+    ConfirmVisit,
+    TtsRequest,
+)
 
 
 @asynccontextmanager
@@ -23,7 +34,10 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="SwarSathi API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="SunoCare API", version="0.2.0", lifespan=lifespan)
+app.include_router(telephony_router)
+from app.recovery import router as recovery_router
+app.include_router(recovery_router)
 origins = [
     origin.strip()
     for origin in os.getenv(
@@ -44,6 +58,7 @@ app.add_middleware(
 async def health() -> dict:
     return {
         "status": "ok",
+        "mode": os.getenv("PROVIDER_MODE", "live").strip().lower(),
         "providers": {
             "prisma": bool(os.getenv("PRISMA_API_KEY_ID") or os.getenv("GNANI_API_KEY_ID")),
             "gemini": bool(os.getenv("GEMINI_API_KEY")),
@@ -51,6 +66,183 @@ async def health() -> dict:
             "timbre": bool(os.getenv("TIMBRE_API_KEY_ID") or os.getenv("GNANI_API_KEY_ID")),
         },
     }
+
+
+def _session_or_404(session_id: str) -> dict:
+    session = db.get_call_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Call session was not found.")
+    return session
+
+
+def _read_answer(item: dict, text: str | None, dtmf: str | None) -> tuple[object, str]:
+    raw = (dtmf or text or "").strip()
+    if not raw:
+        raise HTTPException(status_code=422, detail="Provide an answer using text or keypad input.")
+    kind = item["type"]
+    if kind == "boolean":
+        values = {"1": True, "yes": True, "y": True, "haan": True, "ha": True, "2": False, "no": False, "n": False, "nahi": False}
+        value = values.get(raw.lower())
+        if value is None:
+            raise HTTPException(status_code=422, detail="Choose 1 for yes or 2 for no.")
+        return value, raw
+    if kind == "enum":
+        value = item["options"].get(raw)
+        if value is None:
+            raise HTTPException(status_code=422, detail="Choose one of the displayed options.")
+        return value, raw
+    if kind == "integer":
+        match = re.search(r"\b\d{1,3}\b", raw)
+        if not match:
+            raise HTTPException(status_code=422, detail="Enter the age as digits for this first demo flow.")
+        value = int(match.group())
+        if not item["min"] <= value <= item["max"]:
+            raise HTTPException(status_code=422, detail="Age must be between 0 and 120.")
+        return value, match.group()
+    if kind == "symptoms":
+        return {"reported": raw, "negated": []}, raw
+    return raw, raw
+
+
+def _session_response(session: dict, *, answer: dict | None = None) -> dict:
+    response = {
+        "session_id": session["id"],
+        "state": session["current_question_id"],
+        "status": session["status"],
+        "visit_code": session["visit_code"],
+        "answers": session["answers"],
+    }
+    if session["current_question_id"] not in {FINAL_REVIEW, "SAVED"}:
+        response["prompt"] = prompt(session["current_question_id"])
+    if answer:
+        response["answer"] = answer
+    return response
+
+
+@app.post("/api/calls/start")
+async def start_call(payload: CallStartRequest) -> dict:
+    card = db.visit_card(payload.visit_code)
+    if not card:
+        raise HTTPException(status_code=404, detail="visit_code_not_found")
+    session = db.create_call_session(payload.language_code, payload.visit_code)
+    result = _session_response(session)
+    result["visit_card"] = card
+    return result
+
+
+@app.get("/api/calls/{session_id}")
+async def get_call(session_id: str) -> dict:
+    return _session_response(_session_or_404(session_id))
+
+
+@app.post("/api/calls/{session_id}/answer")
+async def answer_call(session_id: str, payload: CallAnswerRequest) -> dict:
+    session = _session_or_404(session_id)
+    current_id = session["current_question_id"]
+    if current_id in {FINAL_REVIEW, "SAVED"}:
+        raise HTTPException(status_code=409, detail="This call is ready for final review.")
+    if payload.question_id != current_id:
+        raise HTTPException(status_code=409, detail="Answer the current question before continuing.")
+    existing = session["answers"].get(current_id)
+    submitted = (payload.dtmf or payload.text or "").strip()
+    if existing and existing["answer_id"] == payload.answer_id:
+        if existing["transcript"] != submitted:
+            raise HTTPException(status_code=409, detail="This answer ID was already used with different content.")
+        return _session_response(session, answer=existing)
+    item = question(current_id)
+    value, evidence = _read_answer(item, payload.text, payload.dtmf)
+    attempt = (existing or {}).get("attempt", 0) + 1
+    answer = {
+        "answer_id": payload.answer_id,
+        "question_id": current_id,
+        "attempt": attempt,
+        "transcript": submitted,
+        "value": value,
+        "evidence_quote": evidence,
+        "extraction_source": "intent" if item["type"] in {"boolean", "enum", "integer"} else "worker-text",
+        "needs_confirmation": True,
+        "confirmed": False,
+        "previous_attempts": ([*existing.get("previous_attempts", []), {key: value for key, value in existing.items() if key != "previous_attempts"}] if existing else []),
+    }
+    session["answers"][current_id] = answer
+    db.update_call_session(session)
+    return _session_response(session, answer=answer)
+
+
+@app.post("/api/calls/{session_id}/audio")
+async def answer_audio(session_id: str, audio_file: UploadFile = File(...),
+                       answer_id: str = Form(...), question_id: str = Form(...)) -> dict:
+    session = _session_or_404(session_id)
+    if session["current_question_id"] != question_id:
+        raise HTTPException(409, "The current question has changed.")
+    audio = await audio_file.read()
+    if not audio or len(audio) > 2_000_000:
+        raise HTTPException(422, "Provide a short WAV recording.")
+    try:
+        transcript = await prisma.transcribe(audio, "answer.wav", "audio/wav", session["language_code"])
+    except (httpx.HTTPError, RuntimeError) as exc:
+        raise HTTPException(502, "Transcription failed. Retry the recording.") from exc
+    return await answer_call(session_id, CallAnswerRequest(answer_id=answer_id, question_id=question_id, text=transcript))
+
+
+@app.post("/api/calls/{session_id}/action")
+async def call_action(session_id: str, payload: CallActionRequest) -> dict:
+    session = _session_or_404(session_id)
+    current_id = session["current_question_id"]
+    if current_id == FINAL_REVIEW and payload.action == "correct":
+        editable = {"patient_name", "age", "symptoms", "followup_date", "notes"}
+        if payload.field not in editable or payload.field not in session["answers"]:
+            raise HTTPException(status_code=422, detail="Choose an answered detail to correct.")
+        session["current_question_id"] = payload.field
+        session["status"] = "awaiting_confirmation"
+        answer = session["answers"][payload.field]
+        answer["confirmed"] = False
+        answer["needs_confirmation"] = True
+        answer["awaiting_replacement"] = True
+        db.update_call_session(session)
+        return _session_response(session)
+    if current_id in {FINAL_REVIEW, "SAVED"}:
+        raise HTTPException(status_code=409, detail="This call is already ready for finalization.")
+    if not allowed_action(current_id, payload.action):
+        raise HTTPException(status_code=422, detail="That action is not available for this question.")
+    answer = session["answers"].get(current_id)
+    if payload.action == "confirm":
+        if not answer or answer.get("awaiting_replacement"):
+            raise HTTPException(status_code=409, detail="Record an answer before confirming it.")
+        answer["confirmed"] = True
+        answer["needs_confirmation"] = False
+        session["current_question_id"] = next_question(current_id, answer["value"])
+        if session["status"] == "awaiting_confirmation":
+            session["current_question_id"] = FINAL_REVIEW
+            session["status"] = "in_progress"
+    elif payload.action == "skip":
+        session["answers"][current_id] = {
+            "answer_id": f"skipped-{current_id}", "question_id": current_id,
+            "attempt": 0, "transcript": "", "value": None, "evidence_quote": "",
+            "extraction_source": "worker", "needs_confirmation": False, "confirmed": False,
+            "unresolved": True,
+        }
+        session["current_question_id"] = next_question(current_id, None)
+        if session["status"] == "awaiting_confirmation":
+            session["current_question_id"] = FINAL_REVIEW
+            session["status"] = "in_progress"
+    elif payload.action == "unresolved":
+        session["current_question_id"] = next_question(current_id, answer["value"] if answer else None)
+    elif payload.action == "correct" and answer:
+        answer["confirmed"] = False
+        answer["needs_confirmation"] = True
+        answer["awaiting_replacement"] = True
+    # Repeat leaves the interpreted answer available for review.
+    db.update_call_session(session)
+    return _session_response(session)
+
+
+@app.post("/api/calls/{session_id}/finalize")
+async def finalize_call(session_id: str) -> dict:
+    try:
+        return db.finalize_call(session_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.post("/api/visits/process")

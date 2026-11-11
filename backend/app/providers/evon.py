@@ -190,7 +190,7 @@ async def _extract_with_gemini(transcript: str, language: str) -> tuple[VisitFie
             "Gemini is configured but its package is missing. Run: python -m pip install -r requirements.txt"
         ) from exc
 
-    model = os.getenv("GEMINI_MODEL", "gemini-flash-latest").strip()
+    model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
     api_key = os.environ["GEMINI_API_KEY"].strip()
 
     def generate() -> str:

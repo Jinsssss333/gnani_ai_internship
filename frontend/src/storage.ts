@@ -1,5 +1,6 @@
 import type { AuditEvent, QueuedVisit, VisitRecord } from "./types";
 
+// Keep the original database name so the rename preserves existing local visits.
 const DB_NAME = "swarsathi-local";
 const QUEUE_STORE = "queued-visits";
 const REGISTER_STORE = "saved-visits";
@@ -24,7 +25,7 @@ function openDatabase(): Promise<IDBDatabase> {
       };
       resolve(db);
     };
-    request.onblocked = () => reject(new Error("Reload SwarSathi to finish updating its local storage."));
+    request.onblocked = () => reject(new Error("Reload SunoCare to finish updating its local storage."));
     request.onerror = () => reject(request.error ?? new Error("Could not open local visit storage."));
   });
   return database;

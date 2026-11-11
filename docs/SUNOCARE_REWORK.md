@@ -1,5 +1,7 @@
 # SunoCare — Project Rework Plan
 
+> **Implementation update — 10 November 2026:** The user chose real inbound calling instead of the browser simulator. See [PHONE_DEMO.md](PHONE_DEMO.md) for the current Exotel gateway, local supervisor, setup and MVP limits. Simulator/offline-draft sections below remain the earlier design, not claims about the active phone build.
+
 > **SunoCare — Listen. Confirm. Care.**
 > A voice-first, IVR-style visit register that lets frontline health workers (ASHA workers) complete structured home-visit records through guided speech in their own language — with transcript evidence, targeted corrections, offline drafts, and reliable sync.
 

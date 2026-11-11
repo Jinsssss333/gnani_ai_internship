@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import CallSessionScreen from "./CallSession";
 import { deleteVisit as deleteRemoteVisit, getAuditEvents, getVisits, processAudio, requestTts, saveVisit, syncAuditEvent } from "./api";
 import { deleteQueuedVisit, getQueuedVisit, listAuditEvents, listQueuedVisits, listSavedVisits, putAuditEvent, putQueuedVisit, putSavedVisit } from "./storage";
 import type { AuditEvent, QueuedVisit, VisitFields, VisitRecord } from "./types";
@@ -177,6 +178,7 @@ export default function App() {
   const [visits, setVisits] = useState<VisitRecord[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [currentView, setCurrentView] = useState<"dashboard" | "register" | "audit" | "followups">("dashboard");
+  const [callOpen, setCallOpen] = useState(false);
   const [editingVisit, setEditingVisit] = useState<VisitRecord | null>(null);
   const [editTranscript, setEditTranscript] = useState("");
   const [editFields, setEditFields] = useState<VisitFields>(EMPTY_FIELDS);
@@ -416,7 +418,7 @@ export default function App() {
 
   async function beginRecording() {
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      addNotification("This browser cannot record audio. Open SwarSathi in a recent mobile browser.");
+      addNotification("This browser cannot record audio. Open SunoCare in a recent mobile browser.");
       return;
     }
     try {
@@ -804,18 +806,22 @@ export default function App() {
     return (
       <div className="loading-splash">
         <span className="brand-mark" aria-hidden="true">〰</span>
-        <strong>SwarSathi</strong>
+        <strong>SunoCare</strong>
         <div className="loading-bar"><div className="loading-bar-inner" /></div>
       </div>
     );
   }
 
+  if (callOpen) {
+    return <CallSessionScreen onClose={() => setCallOpen(false)} onSaved={() => { setCallOpen(false); setCurrentView("register"); }} />;
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="/" aria-label="SwarSathi home">
+        <a className="brand" href="/" aria-label="SunoCare home">
           <span className="brand-mark" aria-hidden="true">〰</span>
-          <span><strong>SwarSathi</strong><small>ASHA visit register</small></span>
+          <span><strong>SunoCare</strong><small>ASHA visit register</small></span>
         </a>
         <div className="topbar-right">
           <div className={`connection-pill ${online ? "is-online" : "is-offline"}`}>
@@ -854,7 +860,7 @@ export default function App() {
       </header>
 
       <aside className="sidebar" aria-label="Application navigation">
-        <button className="sidebar-capture" onClick={() => { setCurrentView("dashboard"); window.setTimeout(() => document.getElementById("capture-card")?.scrollIntoView({ behavior: "smooth", block: "center" }), 80); }}><span>＋</span> New visit</button>
+        <button className="sidebar-capture" onClick={() => setCallOpen(true)}><span>＋</span> New visit</button>
         <div className="sidebar-section-label">WORKSPACE</div>
         <nav className="sidebar-nav" aria-label="Main navigation">
           <button className={currentView === "dashboard" ? "sidebar-link sidebar-active" : "sidebar-link"} onClick={() => setCurrentView("dashboard")}><span className="sidebar-icon">⌂</span><span>Dashboard</span></button>
@@ -895,7 +901,7 @@ export default function App() {
         {currentView === "followups" && <div className="followups-page">{renderFollowUpsCard(true)}</div>}
 
         {currentView === "dashboard" && <>
-          <div className="dashboard-toolbar"><div><h2>Capture and review</h2></div><button className="button button-primary" onClick={() => document.getElementById("capture-card")?.scrollIntoView({ behavior: "smooth", block: "center" })}>＋ Capture visit</button></div>
+          <div className="dashboard-toolbar"><div><h2>Capture and review</h2></div><button className="button button-primary" onClick={() => setCallOpen(true)}>＋ Start guided visit</button></div>
           <section className="workspace-grid dashboard-grid">
             <div className="left-column">
               <section className="card capture-card" id="capture-card">
@@ -1008,7 +1014,7 @@ export default function App() {
         </>}
 
         {currentView === "register" && <section className="card register-page-card">
-          <div className="register-page-header"><div><span className="section-kicker">CONFIRMED VISITS</span><h2>All active register entries</h2><p>Deleted entries leave this list but remain visible in the audit trail.</p></div><button className="button button-primary" onClick={() => { setCurrentView("dashboard"); window.setTimeout(() => document.getElementById("capture-card")?.scrollIntoView({ behavior: "smooth" }), 80); }}>＋ Capture visit</button></div>
+          <div className="register-page-header"><div><span className="section-kicker">CONFIRMED VISITS</span><h2>All active register entries</h2><p>Deleted entries leave this list but remain visible in the audit trail.</p></div><button className="button button-primary" onClick={() => setCallOpen(true)}>＋ Start guided visit</button></div>
           {loadingPage ? <div className="register-empty">Loading register…</div> : activeVisits.length === 0 ? <div className="register-empty"><span className="register-empty-icon">▤</span><strong>No confirmed visits yet</strong><p>Newly confirmed notes will appear here.</p></div> : <div className="register-table">{activeVisits.map((visit) => <article className="register-table-row" key={visit.id}><div className="patient-initials">{initials(visit.visit.patient_name)}</div><div className="register-person"><strong>{visit.visit.patient_name || "Unnamed patient"}</strong><span>{visit.visit.age ? `${visit.visit.age} years` : "Age not entered"} · {formatDate(visit.created_at)}</span></div><div className="register-symptoms">{visit.visit.symptoms.slice(0, 3).join(", ") || "No symptoms listed"}</div><span className={`sync-status ${visit.sync_state === "pending" ? "status-pending" : ""}`}>{visit.sync_state === "pending" ? "Sync pending" : "Synced"}</span><button className="button button-quiet edit-button" onClick={() => startEditing(visit)}>Edit details</button></article>)}</div>}
           <div className="register-footer"><span className="lock-icon">♧</span><span>Synthetic demo entries only · Audio is not stored with confirmed visits</span></div>
         </section>}
@@ -1026,7 +1032,7 @@ export default function App() {
           <span className="connection-dot" />
           <span>{online ? "Connected" : "Offline · saved locally"}</span>
           <span style={{ margin: '0 4px', opacity: .4 }}>·</span>
-          <span>SwarSathi v0.1.0</span>
+          <span>SunoCare v0.2.0</span>
         </footer>
       </main>
       {editingVisit && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !savingEdit) setEditingVisit(null); }}><section className="edit-modal" role="dialog" aria-modal="true" aria-labelledby="edit-title"><div className="modal-heading"><div><span className="section-kicker">REGISTER ENTRY · {formatDate(editingVisit.created_at)}</span><h2 id="edit-title">Edit visit details</h2></div><button className="modal-close" onClick={() => setEditingVisit(null)} aria-label="Close editor" disabled={savingEdit}>×</button></div><div className="review-form edit-form"><label className="field-label" htmlFor="edit-transcript">TRANSCRIPT <span>EDITABLE</span></label><textarea id="edit-transcript" className="transcript-box" rows={3} value={editTranscript} onChange={(event) => setEditTranscript(event.target.value)} disabled={savingEdit} /><div className="form-grid"><label className="form-field"><span className="field-label">PATIENT NAME</span><input value={editFields.patient_name ?? ""} onChange={(event) => setEditFields((current) => ({ ...current, patient_name: event.target.value }))} disabled={savingEdit} /></label><label className="form-field"><span className="field-label">AGE</span><div className="input-unit"><input type="number" min="0" max="130" value={editFields.age ?? ""} onChange={(event) => setEditFields((current) => ({ ...current, age: event.target.value ? Number(event.target.value) : null }))} disabled={savingEdit} /><span>years</span></div></label><label className="form-field"><span className="field-label">BLOOD PRESSURE</span><div className="input-unit"><input value={editFields.vitals?.blood_pressure ?? ""} onChange={(event) => setEditFields((current) => ({ ...current, vitals: { ...current.vitals, blood_pressure: event.target.value } }))} disabled={savingEdit} /><span>mmHg</span></div></label><label className="form-field"><span className="field-label">TEMPERATURE</span><div className="input-unit"><input type="number" step="0.1" value={editFields.vitals?.temperature_f ?? ""} onChange={(event) => setEditFields((current) => ({ ...current, vitals: { ...current.vitals, temperature_f: event.target.value ? Number(event.target.value) : null } }))} disabled={savingEdit} /><span>°F</span></div></label><label className="form-field span-two"><span className="field-label">SYMPTOMS <small>SEPARATE WITH COMMAS</small></span><input value={editSymptomsText} onChange={(event) => setEditSymptomsText(event.target.value)} disabled={savingEdit} /></label><label className="form-field"><span className="field-label">FOLLOW-UP DATE</span><input type="date" value={editFields.follow_up_date ?? ""} onChange={(event) => setEditFields((current) => ({ ...current, follow_up_date: event.target.value || null, follow_up_status: event.target.value ? current.follow_up_status ?? "pending" : undefined }))} disabled={savingEdit} /></label><label className="form-field"><span className="field-label">FOLLOW-UP STATUS</span><select value={editFields.follow_up_status ?? "pending"} onChange={(event) => setEditFields((current) => ({ ...current, follow_up_status: event.target.value as NonNullable<VisitFields["follow_up_status"]> }))} disabled={savingEdit || !editFields.follow_up_date}><option value="pending">Pending</option><option value="completed">Completed</option><option value="missed">Missed</option></select></label><label className="form-field span-two"><span className="field-label">ORIGINAL DATE PHRASE</span><input value={editFields.follow_up_phrase ?? ""} onChange={(event) => setEditFields((current) => ({ ...current, follow_up_phrase: event.target.value || null }))} placeholder="e.g. Friday" disabled={savingEdit} /></label></div><div className="review-note"><span>✓</span><p>Changes are timestamped in the audit trail. Audio is not retained with this register entry.</p></div><div className="modal-actions"><button className="button button-danger" onClick={() => void removeRegisterVisit(editingVisit)} disabled={savingEdit}>Delete visit</button><div><button className="button button-quiet" onClick={() => setEditingVisit(null)} disabled={savingEdit}>Cancel</button><button className="button button-primary" onClick={() => void saveRegisterEdit()} disabled={savingEdit}>{savingEdit ? "Saving…" : "Save changes"}<span>→</span></button></div></div></div></section></div>}

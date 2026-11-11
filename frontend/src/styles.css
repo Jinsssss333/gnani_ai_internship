@@ -662,3 +662,28 @@ h2 { margin: 9px 0 0; color: #263b34; font-family: Manrope, sans-serif; font-siz
   .modal-actions > div { justify-content: flex-end; }
   .button-danger { align-self: flex-start; }
 }
+
+/* ── SunoCare guided call ── */
+.call-page { min-height: 100vh; display: grid; place-items: center; padding: 28px 16px; background: #f4f8f5; }
+.call-card { width: min(560px, 100%); padding: 30px; border: 1px solid #e3ebe4; border-radius: 22px; background: #fff; box-shadow: 0 18px 50px rgba(32, 74, 57, .12); }
+.call-card h1 { margin: 7px 0 10px; color: #173f35; font-size: clamp(25px, 4vw, 34px); line-height: 1.12; }
+.call-card > p:not(.section-kicker):not(.call-error) { color: #718078; line-height: 1.55; }
+.call-card label { display: grid; gap: 7px; margin-top: 17px; color: #4f6459; font-size: 12px; font-weight: 750; }
+.call-card input, .call-card select { width: 100%; min-height: 48px; padding: 0 13px; border: 1px solid #dce5dd; border-radius: 10px; background: #fff; color: #29483b; font: inherit; }
+.call-primary { width: 100%; min-height: 50px; margin-top: 20px; }
+.call-back { margin: -5px 0 18px; padding: 0; border: 0; background: transparent; color: #39735d; font-size: 12px; font-weight: 750; }
+.call-progress { display: inline-flex; margin-bottom: 11px; padding: 5px 9px; border-radius: 99px; background: #e9f4ec; color: #39735d; font-size: 10px; font-weight: 800; }
+.call-keypad { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 22px; }
+.call-keypad button { min-height: 76px; padding: 10px; border: 1px solid #d9e8dc; border-radius: 13px; background: #f8fbf8; color: #346249; text-align: left; font-size: 12px; font-weight: 700; }
+.call-keypad button:hover { border-color: #75aa82; background: #edf6ee; }
+.call-keypad strong { display: block; margin-bottom: 4px; color: #135e4e; font-size: 23px; }
+.call-result { margin-top: 20px; padding: 18px; border: 1px solid #d9e9df; border-radius: 15px; background: #f6fbf7; }
+.call-result > span, .call-result p { color: #718078; font-size: 11px; }
+.call-result strong { display: block; margin: 6px 0; color: #1c4839; font-size: 19px; }
+.call-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.call-actions button { min-height: 37px; padding: 0 11px; border: 1px solid #cfe0d2; border-radius: 8px; background: #fff; color: #285740; font-size: 11px; font-weight: 750; }
+.call-error { margin-top: 14px; color: #ad493b; font-size: 12px; }
+.call-summary { display: grid; gap: 8px; margin: 20px 0; }
+.call-summary > div { display: grid; grid-template-columns: minmax(90px, 1fr) 1.4fr auto; gap: 9px; align-items: center; padding: 12px; border: 1px solid #edf1ec; border-radius: 10px; }
+.call-summary span { color: #7a8980; font-size: 10px; text-transform: capitalize; }.call-summary strong { color: #315442; font-size: 12px; }.call-summary small { color: #3e8a5b; font-size: 10px; }.saved-call { text-align: center; }.saved-call > span { display: grid; place-items: center; width: 58px; height: 58px; margin: 0 auto 15px; border-radius: 50%; background: #e5f4e8; color: #217044; font-size: 28px; }
+@media (max-width: 460px) { .call-card { padding: 23px 18px; }.call-summary > div { grid-template-columns: 1fr auto; }.call-summary strong { grid-column: 1 / -1; } }

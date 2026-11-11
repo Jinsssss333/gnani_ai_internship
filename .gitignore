@@ -8,3 +8,5 @@ frontend/node_modules/
 frontend/dist/
 frontend/.env.local
 *.pyc
+backend/storage/audio/
+backend/cache/tts/

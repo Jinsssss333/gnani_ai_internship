@@ -51,6 +51,9 @@ LANGUAGE_MENU = [("hi-IN", "सुनोकेयर में स्वाग�
                  ("en-IN", "Welcome to SunoCare. For English, press 4. Synthetic data only.")]
 
 PROMPTS['en-IN'].update({
+    'visit_done': 'Were you able to meet the patient and carry out this home visit? Press 1 for yes, to record patient details. Press 2 only if the visit could not be carried out.',
+    'not_completed_branch': 'This records an unsuccessful visit and skips patient details. If that is wrong, press 2 to change your answer.',
+    'missing_required': 'A required detail is still missing. Please complete it before submitting.',
     'review': 'Press 1 to review each field, 2 to edit, 3 to finish, or 9 to save a draft.',
     'review_keys': 'Press 1 for next, 2 to edit this field, 3 to repeat, or 9 to finish reviewing.',
     'submit_menu': 'Press 1 to submit, 2 to review again, or 9 to save as draft.',
@@ -61,6 +64,9 @@ PROMPTS['en-IN'].update({
     'unavailable': 'Your draft is saved in SunoCare under Needs review. It has not been submitted. You may hang up.',
 })
 PROMPTS['hi-IN'].update({
+    'visit_done': 'क्या आप मरीज़ से मिलकर घर की मुलाकात कर पाए? हाँ और मरीज़ की जानकारी दर्ज करने के लिए 1 दबाएं। मुलाकात नहीं हो पाई हो तभी 2 दबाएं।',
+    'not_completed_branch': 'इससे मुलाकात नहीं हुई दर्ज होगा और मरीज़ की जानकारी नहीं पूछी जाएगी। गलत है तो जवाब बदलने के लिए 2 दबाएं।',
+    'missing_required': 'ज़रूरी जानकारी बाकी है। जमा करने से पहले इसे पूरा करें।',
     'review': 'हर जवाब जाँचने के लिए 1, सुधारने के लिए 2, समाप्त करने के लिए 3, अधूरा फॉर्म सेव करने के लिए 9 दबाएं।',
     'review_keys': 'अगले जवाब के लिए 1, सुधारने के लिए 2, फिर सुनने के लिए 3, समीक्षा समाप्त करने के लिए 9 दबाएं।',
     'submit_menu': 'जमा करने के लिए 1, फिर जाँचने के लिए 2, अधूरा फॉर्म सेव करने के लिए 9 दबाएं।',

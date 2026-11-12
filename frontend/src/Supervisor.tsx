@@ -11,7 +11,9 @@ function display(value: unknown): string {
   if (typeof value === 'object') {
     const v = value as Record<string, unknown>;
     if (v.date) return String(v.date).split('-').reverse().join('/');
-    return Object.entries(v).map(([k,x]) => `${label(k)}: ${Array.isArray(x) ? x.join(', ') || 'None' : x}`).join(' · ');
+    return Object.entries(v)
+      .filter(([k, x]) => k !== 'negated' || (Array.isArray(x) && x.some(item => String(item).trim())))
+      .map(([k,x]) => `${k === 'negated' ? 'Symptoms denied' : k === 'reported' ? 'Reported' : label(k)}: ${Array.isArray(x) ? x.join(', ') || 'None' : x}`).join(' · ');
   }
   return String(value);
 }

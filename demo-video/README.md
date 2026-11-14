@@ -4,6 +4,16 @@ A locally rendered 90-second motion-graphics introduction. Ten nine-second chapt
 
 ## Render
 
+### Blur the final demo's phone-number line
+
+`blur_demo_number.py` creates a separate MOV export for the inspected `Suno_final.mov` layout: 1920 × 1080 at 24 fps, with the demo starting at 75 seconds. It applies a strong blur to the full phone-header line at `(0, 36, 504, 72)` on every frame from that point to the end, covering the number as it shifts when keypad digits accumulate. Audio is stream-copied and the original file is preserved.
+
+```powershell
+python demo-video/blur_demo_number.py "C:/path/to/Suno_final.mov"
+```
+
+Output: `demo-video/output/redacted/Suno_final_blurred.mov`. This is a fixed mask for this specific edit; inspect and adjust it for any other layout or timeline. It does not automatically find numbers elsewhere in the video or remove spoken numbers.
+
 ### Add a supplied voiceover locally
 
 `sync_voiceover.py` transcribes an existing recording on the computer, aligns it to the original script, shortens long pauses, and uses pitch-preserving time stretching to fit 74 seconds of narration plus a one-second silent handoff. It then renders the same ten scenes with the new timing and synchronized captions, including the Gnani reference images. This uses the supplied voice, not a cloned or newly generated voice.

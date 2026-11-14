@@ -4,6 +4,22 @@ A locally rendered 90-second motion-graphics introduction. Ten nine-second chapt
 
 ## Render
 
+### Character animation
+
+`animate_character.py` renders the newer 90-second 2D cutout version, using the supplied ASHA character design. It animates blinking, mouth poses, body sway, waveforms and workflow cards. These are procedural cutout movements, not newly drawn poses or audio-synchronized lip movements.
+
+Place the prepared transparent character asset at `demo-video/output/asha_cutout.png`, then run:
+
+```powershell
+python demo-video/animate_character.py
+```
+
+The renderer expects the prepared 1024 × 1536 cutout; its facial animation coordinates are specific to that image. The asset is local and ignored by Git, so a fresh checkout needs that asset copied separately.
+
+Outputs: `SunoCare_character_animation.mp4` (silent 1080p, 24 fps), `character_narration.txt` (the exact requested script), `character_narration.srt`, and character preview images. Eight narration sections are timed by word count across 90 seconds. Add a recorded voiceover in your editor and adjust timing to the actual delivery.
+
+### Original motion graphics
+
 Requires Python with Pillow, FFmpeg on PATH, and Windows Segoe UI fonts.
 
 ```powershell

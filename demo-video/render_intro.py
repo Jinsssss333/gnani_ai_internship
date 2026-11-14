@@ -135,4 +135,4 @@ for i,scene in enumerate(scenes):
  print(f'Rendered scene {i+1}/10',flush=True)
 proc.stdin.close()
 if proc.wait()!=0:raise RuntimeError('Video encoding failed')
-print(OUT/'SunoCare_intro_90s_1080p.mp4',flush=True)
+print('Saved output/SunoCare_intro_90s_1080p.mp4',flush=True)

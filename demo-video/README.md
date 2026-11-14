@@ -4,6 +4,20 @@ A locally rendered 90-second motion-graphics introduction. Ten nine-second chapt
 
 ## Render
 
+### Add a supplied voiceover locally
+
+`sync_voiceover.py` transcribes an existing recording on the computer, aligns it to the original script, shortens long pauses, and uses pitch-preserving time stretching to fit 74 seconds of narration plus a one-second silent handoff. It then renders the same ten scenes with the new timing and synchronized captions, including the Gnani reference images. This uses the supplied voice, not a cloned or newly generated voice.
+
+```powershell
+python -m pip install --target demo-video/output/audio_tools faster-whisper
+python demo-video/sync_voiceover.py --download-model
+python demo-video/sync_voiceover.py --transcribe --audio "C:/path/to/narration.mp3"
+python demo-video/sync_voiceover.py --preview --audio "C:/path/to/narration.mp3"
+python demo-video/sync_voiceover.py --render --audio "C:/path/to/narration.mp3"
+```
+
+Only installation and the model download require network access. Audio transcription uses local model files with Hugging Face offline mode enabled. Outputs are ignored by Git under `demo-video/output/voiced/`: `SunoCare_intro_75s_with_voice.mp4`, `SunoCare_narration_75s.wav`, `SunoCare_narration_75s.mp3`, `captions_synced.srt`, and `alignment.json`. Original files are preserved. Inspect the transcript and preview before rendering; the script stops if fewer than 85% of normalized script tokens match, but that threshold is not a substitute for checking recognition errors. Retiming a long narration can make delivery brisk.
+
 ### Latest: 75-second introduction with Gnani references
 
 `render_intro_v2.py` produces ten distinct shots, each used once, in a 75-second silent video. It preserves the original character video's complete script as short caption cues. Prisma and Timbre each have a dedicated shot displaying the supplied screenshot. The illustrations are explanatory cutout/motion graphics, not recordings of a live call.

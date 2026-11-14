@@ -70,6 +70,7 @@ From `frontend`: `npm run build` and `node --check public/sw.js`.
 ## Review, recover and export
 
 - The register refreshes every three seconds. In progress means an active call; Needs review means unfinished documentation; Submitted means a finalized record. A home visit that could not be carried out can still have a submitted record.
+- Symptom details show reported symptoms and, when present, **Symptoms denied** for explicitly ruled-out symptoms. The denied-symptoms line is hidden when empty; an empty list does not establish that other symptoms are absent.
 - Open a draft to resolve its next missing answer. Complete the required fields, then choose **Confirm and submit visit**. Active calls cannot be edited from the dashboard.
 - Phone review reads one field at a time: **1 next, 2 edit, 3 repeat, 9 finish reviewing**. The final menu offers **1 submit, 2 review again, 9 draft**. Instructions repeat after inactivity. Editing visit completion rechecks the newly applicable patient fields.
 - Age and follow-up date offer **4** for keypad input. Date: eight digits **DDMMYYYY**; age: digits then **#**. Press **\*** to clear. Dates are spoken day/month/year and stored as ISO dates.
@@ -77,13 +78,17 @@ From `frontend`: `npm run build` and `node --check public/sw.js`.
 - **Download Excel** produces a genuine `.xlsx` workbook with filters, frozen headers and wrapped cells. **PDF / Print** opens a report; click **Print / Save as PDF** and select **Save as PDF** in your browser. Pop-ups must be allowed. PDF is a browser print workflow, not an automatic PDF download.
 - Exports contain all loaded, non-deleted submitted visits in the selected period, independent of the status filter. They include patient details, symptoms, follow-up, notes, visit outcome/reason and existing vitals. Drafts, call audio and audit events are excluded. The local register API returns the full submitted history without the former 100-record cap.
 
-Latest verified state (11 November 2026):
+Latest verification and known limitations (14 November 2026):
 
 - 22 offline backend tests passed before the export addition, including call corrections, draft recovery, finalization and gateway access checks.
-- Frontend production build and service-worker syntax check pass.
-- Live Hindi Timbre → Prisma round-trip and English Timbre generation pass.
+- Frontend production build passed after the symptom display update on 12 November. The service-worker syntax check previously passed on 11 November.
+- Live Hindi Timbre → Prisma round-trip, Gemini age extraction and English Timbre generation passed on 14 November.
 - Gemini uses `gemini-3.5-flash-lite` with the existing key. Live synthetic age correction, symptom negation and Hindi Timbre → Prisma → Gemini age extraction passed. These smoke tests do not establish general extraction accuracy.
 - Real Exotel calls have reached the form and created records. Name transcription accuracy remains under investigation: clearly spoken Akash was transcribed differently; extraction now preserves name candidates for explicit caller confirmation. Do not assume provider smoke tests prove recognition accuracy.
+- Completed real calls were recorded on 11–13 November. On 14 November, one call reached the gateway and ended incomplete after about 18 seconds; subsequent reported attempts did not appear in the tunnel or gateway logs. The latest call problem remains unresolved.
+- On 14 November, the local services and public tunnel responded successfully. An unauthenticated public WebSocket probe reached the gateway and was rejected with HTTP 403 as expected. This checks routing and authentication enforcement, not a successful authenticated call. Services must be checked again after restarting the computer.
+
+For a silent or disconnected call, compare the latest Exotel call's applet execution details with ngrok requests and gateway logs. If no WebSocket request arrives, inspect the assigned flow and Voicebot endpoint. If a request arrives, check its handshake status and gateway error. Keep gateway output captured during troubleshooting; a successful health response alone does not verify the complete phone workflow.
 
 ## Project map
 

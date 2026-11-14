@@ -4,6 +4,25 @@ A locally rendered 90-second motion-graphics introduction. Ten nine-second chapt
 
 ## Render
 
+### Latest: 75-second introduction with Gnani references
+
+`render_intro_v2.py` produces ten distinct shots, each used once, in a 75-second silent video. It preserves the original character video's complete script as short caption cues. Prisma and Timbre each have a dedicated shot displaying the supplied screenshot. The illustrations are explanatory cutout/motion graphics, not recordings of a live call.
+
+Prepare these local assets in `demo-video/output/v2/assets/`:
+
+- `asha_cutout.png`: the same prepared character used below.
+- `prisma.png`: supplied `Screenshot 2026-11-14 134844.png`.
+- `timbre.png`: supplied `Screenshot 2026-11-14 134859.png`.
+
+```powershell
+python demo-video/render_intro_v2.py --preview
+python demo-video/render_intro_v2.py
+```
+
+Outputs in `demo-video/output/v2/`: `SunoCare_intro_75s.mp4` (1080p, H.264, 24 fps), `narration_exact.txt`, `captions_75s.srt`, `shot_list.json`, ten shot previews, and `storyboard.jpg`. Assets and generated media are ignored by Git. No cloud generation or API credentials are required.
+
+The complete script needs a brisk voiceover to fit 75 seconds. This render has no audio; align your narration to the shot list, or retime the scenes in an editor. Prisma appears at 00:40.8–00:46.5 and Timbre at 00:46.5–00:51.3. The supplied Timbre image displays v3.0; this is reference artwork, not verification of the backend's configured model version.
+
 ### Character animation
 
 `animate_character.py` renders the newer 90-second 2D cutout version, using the supplied ASHA character design. It animates blinking, mouth poses, body sway, waveforms and workflow cards. These are procedural cutout movements, not newly drawn poses or audio-synchronized lip movements.

@@ -10,3 +10,20 @@ frontend/.env.local
 *.pyc
 backend/storage/audio/
 backend/cache/tts/
+
+# Local editor settings, generated build state, and logs
+.idea/
+__pycache__/
+.pytest_cache/
+*.tsbuildinfo
+*.log
+
+# Local presentation work and generated source dump (not application code)
+demo-video/
+project_code.txt
+
+# Publish the final demo as a release attachment, not a Git source blob
+*.mov
+*.mp4
+*.mp3
+*.wav
